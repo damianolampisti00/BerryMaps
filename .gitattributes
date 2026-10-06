@@ -1,0 +1,2 @@
+# Shell scripts run on the phone (QNX sh): must keep LF line endings.
+*.sh text eol=lf

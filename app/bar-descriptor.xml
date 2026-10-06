@@ -1,0 +1,32 @@
+﻿<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<qnx xmlns="http://www.qnx.com/schemas/application/1.0">
+    <id>it.berrymaps.app</id>
+    <configuration name="Device-Release">
+       <entryPointType>Qnx/Cascades</entryPointType>
+       <platformArchitecture>armle-v7</platformArchitecture>
+       <asset path="arm/o.le-v7/BerryMaps.so" entry="true" type="Qnx/Elf">BerryMaps.so</asset>
+    </configuration>
+    <name>BerryMaps</name>
+    <versionNumber>0.1.0</versionNumber>
+    <buildId>19</buildId>
+    <description>Mappe Google native per BlackBerry 10.</description>
+    <author>BerryMaps</author>
+    <cascadesTheme>dark</cascadesTheme>
+    <initialWindow>
+        <autoOrients>false</autoOrients>
+        <systemChrome>none</systemChrome>
+    </initialWindow>
+    <icon>
+        <image>icon.png</image>
+    </icon>
+    <asset path="icon.png">icon.png</asset>
+    <asset path="assets">assets</asset>
+    <permission system="true">run_native</permission>
+    <permission>access_internet</permission>
+    <permission>access_location_services</permission>
+    <!-- navigation keeps guiding with the app minimized -->
+    <permission>run_when_backgrounded</permission>
+    <!-- berrymaps.log copy and the API key file live in shared/misc -->
+    <permission>access_shared</permission>
+    <env var="LD_LIBRARY_PATH" value="app/native/lib:/usr/lib/qt4/lib"/>
+</qnx>
