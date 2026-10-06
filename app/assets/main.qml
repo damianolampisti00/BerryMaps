@@ -195,6 +195,9 @@ Page {
         // Guidance: no action bar (glanceable screen, no complex input).
         nav.activeChanged.connect(function () {
             page.actionBarVisibility = nav.active ? ChromeVisibility.Hidden : ChromeVisibility.Overlay;
+            // Active Frame: next manoeuvre while guiding, the normal snapshot otherwise.
+            if (nav.active) Application.setCover(navCover);
+            else Application.resetCover();
         });
         places.placeResolved.connect(function (name, address, lat, lon) {
             var target = page.searchTarget;
@@ -567,6 +570,13 @@ Page {
                 textStyle.base: SystemDefaults.TextStyles.BodyText
                 textStyle.color: Color.White
             }
+            // Voice prompts on/off (BerryAssistant server, see VoiceGuide).
+            Button {
+                visible: voice.available
+                text: voice.enabled ? "Silenzia" : "Voce"
+                preferredWidth: ui.du(18)
+                onClicked: voice.enabled = !voice.enabled
+            }
             Button {
                 text: nav.arrived ? "Fine" : "Termina"
                 preferredWidth: ui.du(20)
@@ -675,6 +685,48 @@ Page {
         SystemToast {
             id: toast
         },
+        // Active Frame during guidance (720x720 devices: 310x211, title footer
+        // added by the system). Updated with the guidance, nothing else.
+        SceneCover {
+            id: navCover
+            content: Container {
+                background: nav.degraded ? Color.create("#b06000") : Color.create("#0b57d0")
+                leftPadding: ui.du(1.5)
+                rightPadding: ui.du(1.5)
+                topPadding: ui.du(1)
+                layout: StackLayout {}
+                Container {
+                    layout: StackLayout { orientation: LayoutOrientation.LeftToRight }
+                    Label {
+                        text: nav.glyph
+                        verticalAlignment: VerticalAlignment.Center
+                        textStyle.fontSize: FontSize.PointValue
+                        textStyle.fontSizeValue: 14
+                        textStyle.color: Color.White
+                    }
+                    Label {
+                        text: nav.distanceText
+                        leftMargin: ui.du(1)
+                        verticalAlignment: VerticalAlignment.Center
+                        textStyle.fontSize: FontSize.PointValue
+                        textStyle.fontSizeValue: 10
+                        textStyle.fontWeight: FontWeight.Bold
+                        textStyle.color: Color.White
+                    }
+                }
+                Label {
+                    text: nav.instruction
+                    multiline: true
+                    textStyle.base: SystemDefaults.TextStyles.BodyText
+                    textStyle.color: Color.White
+                }
+                Label {
+                    text: nav.remainingText
+                    textStyle.base: SystemDefaults.TextStyles.SmallText
+                    textStyle.color: Color.create("#d2e3fc")
+                }
+            }
+        },
         Sheet {
             id: stepsSheet
             Page {
@@ -734,7 +786,7 @@ Page {
                         Header { title: "Gesti" }
                         Label {
                             multiline: true
-                            text: "Trascina per spostare la mappa, lancia per scorrere.\nPizzica o tocca due volte per ingrandire.\nTieni premuto per sapere l'indirizzo di un punto.\nIndicazioni (nella scheda di un luogo) calcola il percorso; Avvia la guida.\nUn tocco mostra o nasconde la barra in basso."
+                            text: "Trascina per spostare la mappa, lancia per scorrere.\nPizzica o tocca due volte per ingrandire.\nTieni premuto per sapere l'indirizzo di un punto.\nIndicazioni (nella scheda di un luogo) calcola il percorso; Avvia la guida.\nDurante la guida: indicazioni a voce (Silenzia per spegnerle) e prossima manovra anche nell'Active Frame.\nUn tocco mostra o nasconde la barra in basso."
                         }
                         Header { title: "Tastiera" }
                         Label {

@@ -905,6 +905,25 @@ Principi rilevanti per BerryMaps e come sono applicati (BerryMaps 0.1.0.11):
 
 ---
 
+## 23. Indicazioni vocali e Active Frame (BerryMaps 0.1.0.20, da provare)
+
+- BB10 non ha sintesi vocale: `VoiceGuide` manda il testo al server di **BerryAssistant** (`POST /v1/tts`, token
+  Bearer, Piper voce italiana *it_IT-paola-medium*) e riceve Ogg/Opus (~10 KB a frase); libopus lo decodifica in WAV
+  e lo riproduce il `MediaPlayer` di sistema. Misure sul server: 0,36 s alla prima sintesi, < 1 ms dalla cache
+  (ultime 200 frasi), 0,2 s attraverso il tunnel Cloudflare. Server e token: i file di BerryAssistant sul telefono
+  (`berryassistant_server.txt`, `berryassistant_token.txt`). Senza server la guida funziona, solo muta.
+- Abbreviazioni sciolte prima della sintesi (P.za → Piazza, V.le → Viale, C.so → Corso, SS12 → Strada Statale 12…).
+- Annunci (una volta per manovra, anche con i ricalcoli ogni 15 s: chiave = istruzione + distanza dalla meta):
+  avvio; "Tra 500 metri, …" (auto, 200–550 m) o "Tra 150 metri, …" (piedi/bici, 60–170 m); istruzione alla manovra
+  (auto 120 m, piedi/bici 30 m); mezzi: "Alla fermata X prendi Metropolitana 3 direzione Y, alle 22:25" e a bordo
+  "Scendi a Z, tra N fermate"; "Ricalcolo il percorso"; "Segnale GPS debole"; "Sei arrivato a destinazione".
+- Pulsante **Silenzia/Voce** nella barra della guida (ricordato tra un avvio e l'altro).
+- **Active Frame** durante la guida (`SceneCover`, 310×211 sul Q5): freccia, distanza, istruzione, tempo e arrivo;
+  arancione con GPS debole; fuori dalla guida torna l'anteprima normale.
+- Termini Google EEA: nessun divieto di leggere ad alta voce le istruzioni (il divieto TTS è solo nei termini globali).
+
+---
+
 ## Fonti
 - Prezzi e quote: [Pricing categories](https://developers.google.com/maps/billing-and-pricing/pricing-categories),
   [SKU details](https://developers.google.com/maps/billing-and-pricing/sku-details),

@@ -2,9 +2,11 @@
 #include "routeclient.hpp"
 #include "locationservice.hpp"
 #include "mapcontroller.hpp"
+#include "voiceguide.hpp"
 #include "bbportlog.hpp"
 
 #include <QDateTime>
+#include <QRegExp>
 #include <QtCore/qmath.h>
 
 #include <bb/device/VibrationController>
@@ -25,6 +27,20 @@ QString formatDistance(double m)
     return QString("%1 km").arg(m / 1000.0, 0, 'f', m < 10000 ? 1 : 0).replace('.', ',');
 }
 
+// Distance as spoken: "500 metri", "un chilometro", "1,5 chilometri".
+QString spokenDistance(double m)
+{
+    if (m < 1000) return QString("%1 metri").arg(qMax(50, qRound(m / 50.0) * 50));
+    double km = qRound(m / 100.0) / 10.0;
+    if (km == 1.0) return QString::fromUtf8("un chilometro");
+    return QString("%1 chilometri").arg(km, 0, 'f', km == int(km) ? 0 : 1).replace('.', ',');
+}
+
+QString lowerFirst(const QString &s)
+{
+    return s.isEmpty() ? s : s.left(1).toLower() + s.mid(1);
+}
+
 // Local planar approximation around `ref` (metres), good enough for snapping.
 void toMetres(const QPointF &p, const QPointF &ref, double *x, double *y)
 {
@@ -38,7 +54,8 @@ Navigator::Navigator(RouteClient *route, LocationService *loc, MapController *ma
     QObject(parent), m_route(route), m_loc(loc), m_map(map),
     m_vibra(new bb::device::VibrationController(this)),
     m_active(false), m_arrived(false), m_degraded(false),
-    m_segment(0), m_progressM(0), m_offCount(0), m_vibratedStep(-1)
+    m_segment(0), m_progressM(0), m_offCount(0), m_vibratedStep(-1),
+    m_voice(0), m_wasDegraded(false)
 {
     connect(m_loc, SIGNAL(updated()), this, SLOT(onFix()));
     connect(m_route, SIGNAL(routeChanged()), this, SLOT(onRouteChanged()));
@@ -55,12 +72,24 @@ void Navigator::start()
     m_progressM = 0;
     m_offCount = 0;
     m_vibratedStep = -1;
+    m_spoken.clear();
+    m_wasDegraded = false;
     m_sinceReroute.start();
     m_map->setNavigating(true);
     if (m_route->mode() == "DRIVE") m_refresh.start();
     bbportLog("[nav] avviata (" + m_route->mode() + ")");
     emit activeChanged();
+    const QVector<RouteStep> &steps = m_route->routeSteps();
+    if (m_route->mode() == "TRANSIT") speakOnce("start", QString::fromUtf8("Percorso con i mezzi avviato."));
+    else speakOnce("start", "Percorso avviato. " + (steps.isEmpty() ? QString() : steps.at(0).instruction));
     update();
+}
+
+void Navigator::speakOnce(const QString &key, const QString &text)
+{
+    if (!m_voice || m_spoken.contains(key)) return;
+    m_spoken.insert(key);
+    m_voice->say(text);
 }
 
 void Navigator::stop()
@@ -157,6 +186,7 @@ void Navigator::update()
         m_offCount = off > limit ? m_offCount + 1 : 0;
         if (m_offCount >= kOffRouteFixes && m_route->mode() != "TRANSIT") {
             m_offCount = 0;
+            if (m_sinceReroute.elapsed() >= kMinRerouteGapMs && m_voice) m_voice->say("Ricalcolo il percorso.");
             requestReroute("fuori percorso");
         }
     }
@@ -167,6 +197,7 @@ void Navigator::update()
             m_arrived = true;
             m_refresh.stop();
             m_vibra->start(100, 600);
+            speakOnce("arrived", "Sei arrivato a destinazione.");
             bbportLog("[nav] arrivato");
         }
         m_glyph = QString::fromUtf8("\u25c9");
@@ -186,6 +217,15 @@ void Navigator::update()
     double toNext = next >= 0 ? steps.at(next).startM - m_progressM : remaining;
     int current = next > 0 ? next - 1 : (next < 0 ? steps.size() - 1 : -1);
 
+    if (m_degraded && !m_wasDegraded) speakOnce(QString("gps%1").arg(qRound(m_progressM / 200)), "Segnale GPS debole.");
+    m_wasDegraded = m_degraded;
+    // A step's identity that survives the 15 s reroutes of the same route:
+    // its instruction plus its distance from the destination.
+    const QString nextKey = next >= 0 ? steps.at(next).instruction + "@" +
+                                        QString::number(qRound((total - steps.at(next).startM) / 50.0))
+                                      : QString();
+    const bool driving = m_route->mode() == "DRIVE";
+
     if (current >= 0 && steps.at(current).transit) {
         // On board: timetable information, valid even without GPS (underground).
         const RouteStep &s = steps.at(current);
@@ -193,6 +233,8 @@ void Navigator::update()
         m_distanceText = s.arrTime.isEmpty() ? QString() : "scendi alle " + s.arrTime;
         m_instruction = s.vehicle + QString::fromUtf8(" \u2192 ") + s.headsign + ": scendi a " + s.arrStop +
                         " (" + QString::number(s.stops) + (s.stops == 1 ? " fermata)" : " fermate)");
+        speakOnce("board:" + s.depStop + s.line, "Scendi a " + s.arrStop + ", tra " + QString::number(s.stops) +
+                  (s.stops == 1 ? " fermata." : " fermate."));
     } else if (next >= 0 && steps.at(next).transit && !m_degraded) {
         // Walking to the stop: say what to catch and when.
         const RouteStep &s = steps.at(next);
@@ -200,6 +242,12 @@ void Navigator::update()
         m_distanceText = formatDistance(toNext);
         m_instruction = "Raggiungi la fermata " + s.depStop + ": " + s.line + QString::fromUtf8(" \u2192 ") +
                         s.headsign + (s.depTime.isEmpty() ? QString() : " alle " + s.depTime);
+        if (toNext <= 30) {
+            QString number = s.line;
+            number.remove(QRegExp("^(M|Bus |Tram |Treno )"));
+            speakOnce("stop:" + s.depStop + s.line, "Alla fermata " + s.depStop + " prendi " + s.vehicle + " " +
+                      number + " direzione " + s.headsign + (s.depTime.isEmpty() ? "." : ", alle " + s.depTime + "."));
+        }
     } else if (m_degraded) {
         // Safety: an uncertain position must not drive precise instructions.
         m_glyph = QString::fromUtf8("\u26a0");
@@ -209,6 +257,12 @@ void Navigator::update()
         m_glyph = glyphFor(steps.at(next).maneuver);
         m_distanceText = formatDistance(toNext);
         m_instruction = steps.at(next).instruction;
+        // Spoken: once well before the manoeuvre, once right at it.
+        const double farAt = driving ? 550 : 170, farMin = driving ? 200 : 60, nearAt = driving ? 120 : 30;
+        if (toNext <= farAt && toNext >= farMin)
+            speakOnce("far:" + nextKey, "Tra " + spokenDistance(toNext) + ", " + lowerFirst(steps.at(next).instruction));
+        else if (toNext <= nearAt)
+            speakOnce("near:" + nextKey, steps.at(next).instruction);
         double warnAt = m_route->mode() == "DRIVE" ? 80 : 25;
         if (toNext < warnAt && m_vibratedStep != next) {
             m_vibratedStep = next;

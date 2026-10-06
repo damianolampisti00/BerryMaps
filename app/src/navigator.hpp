@@ -5,10 +5,12 @@
 #include <QString>
 #include <QTimer>
 #include <QElapsedTimer>
+#include <QSet>
 
 class RouteClient;
 class LocationService;
 class MapController;
+class VoiceGuide;
 namespace bb { namespace device { class VibrationController; } }
 
 // Turn-by-turn guidance on the planned route (PROGETTO.md §7.3, §22).
@@ -41,6 +43,8 @@ public:
     QString instruction() const { return m_instruction; }
     QString remainingText() const { return m_remainingText; }
 
+    void setVoice(VoiceGuide *voice) { m_voice = voice; }
+
     Q_INVOKABLE void start();
     Q_INVOKABLE void stop();
 
@@ -58,6 +62,7 @@ private:
     bool matchPosition(double *offRouteM);
     void requestReroute(const char *why);
     static QString glyphFor(const QString &maneuver);
+    void speakOnce(const QString &key, const QString &text);
 
     RouteClient *m_route;
     LocationService *m_loc;
@@ -70,6 +75,9 @@ private:
     double m_progressM;     // metres travelled along the route
     int m_offCount;
     int m_vibratedStep;
+    VoiceGuide *m_voice;
+    QSet<QString> m_spoken;     // prompts already said on this trip
+    bool m_wasDegraded;
     QString m_glyph, m_distanceText, m_instruction, m_remainingText;
 };
 

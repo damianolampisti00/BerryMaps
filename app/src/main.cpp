@@ -2,6 +2,7 @@
 #include "placesclient.hpp"
 #include "routeclient.hpp"
 #include "navigator.hpp"
+#include "voiceguide.hpp"
 #include "bbportlog.hpp"
 
 #include <bb/cascades/Application>
@@ -30,12 +31,15 @@ Q_DECL_EXPORT int main(int argc, char **argv)
     PlacesClient places;
     RouteClient routing;
     Navigator nav(&routing, map.locationService(), &map);
+    VoiceGuide voice;
+    nav.setVoice(&voice);
 
     QmlDocument *qml = QmlDocument::create("asset:///main.qml").parent(&map);
     qml->setContextProperty("map", &map);
     qml->setContextProperty("places", &places);
     qml->setContextProperty("routing", &routing);
     qml->setContextProperty("nav", &nav);
+    qml->setContextProperty("voice", &voice);
     logQmlErrors(qml);
     AbstractPane *root = qml->createRootObject<AbstractPane>();
     if (!root) {
