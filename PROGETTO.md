@@ -937,6 +937,10 @@ Principi rilevanti per BerryMaps e come sono applicati (BerryMaps 0.1.0.11):
   verificato per Milano il 6/10: 07:27 / 18:55 contro ~07:26 / 18:52 reali), controllo ogni 5 minuti; ogni
   richiesta porta lo stile, quindi un cambio giorno/notte con tessere in volo non mescola gli stili.
   Impostazioni nel menu dall'alto (a destra): stile mappa, indicazioni vocali.
+- **Notte meno scura** (0.1.0.26, su richiesta: Dark Matter è quasi nero, luminosità 3–68): ogni tessera notturna viene
+  ritoccata al download nel thread di rete — sfondo blu ardesia `#242f3e`, resto stirato fino a ~200 (curva fissa,
+  uguale per tutte le tessere); le PNG a palette richiedono solo il cambio della palette. Misurato su una tessera
+  salvata sul telefono: luminosità media 70 (era 11). Cache notturna in `tiles/carto/night`, la vecchia `dark` eliminata.
 - **Luoghi da altre app** (0.1.0.25): sul Q5 **non c'è più l'app Mappe** (nessun gestore nel registro
   `/pps/system/navigator/invokes`, solo BlackBerry Places per `maps.blackberry.com`) e Contatti/Calendario la
   invocano per nome, quindi non si possono intercettare. BerryMaps si registra per ciò che arriva senza destinatario:

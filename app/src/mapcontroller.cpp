@@ -158,7 +158,7 @@ void MapController::updateStyle()
     bbportLog(QString("[map] stile %1 (%2)").arg(night ? "notte" : "giorno").arg(m_styleMode));
     if (m_zoomLayer) {
         // Placeholder colour while the other style's tiles load.
-        m_zoomLayer->setBackground(Color::fromARGB(night ? 0xff1b1b1d : 0xfff2efe9));
+        m_zoomLayer->setBackground(Color::fromARGB(night ? 0xff242f3e : 0xfff2efe9));
         dropStale();
         releaseAll();
         relayout();
@@ -175,7 +175,7 @@ void MapController::attach(QObject *hostObj)
     }
     m_zoomLayer = Container::create().layout(AbsoluteLayout::create());
     m_zoomLayer->setImplicitLayoutAnimationsEnabled(false);
-    m_zoomLayer->setBackground(Color::fromARGB(m_night ? 0xff1b1b1d : 0xfff2efe9));   // land colour while tiles load
+    m_zoomLayer->setBackground(Color::fromARGB(m_night ? 0xff242f3e : 0xfff2efe9));   // land colour while tiles load
     // setViewport() may already have run (LayoutUpdateHandler fires early).
     m_zoomLayer->setPreferredSize(m_vw, m_vh);
     m_panLayer = Container::create().layout(AbsoluteLayout::create());

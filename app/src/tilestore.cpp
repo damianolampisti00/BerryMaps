@@ -45,13 +45,14 @@ void removeTree(const QString &path)
 class CacheMaintenance : public QThread
 {
 public:
-    CacheMaintenance(const QString &root, const QString &obsolete) : m_root(root), m_obsolete(obsolete) {}
+    CacheMaintenance(const QString &root, const QStringList &obsolete) : m_root(root), m_obsolete(obsolete) {}
 protected:
     virtual void run()
     {
-        if (QDir(m_obsolete).exists()) {
-            removeTree(m_obsolete);
-            bbportLog("[cache] tessere Google della versione precedente eliminate");
+        foreach (const QString &dir, m_obsolete) {
+            if (!QDir(dir).exists()) continue;
+            removeTree(dir);
+            bbportLog("[cache] eliminata cache obsoleta " + QDir(dir).dirName());
         }
         QList<QPair<qint64, QString> > files;  // (mtime, path)
         QHash<QString, qint64> sizes;
@@ -76,7 +77,8 @@ protected:
         bbportLog(QString("[cache] ridotta a %1 MB").arg(total / 1048576.0, 0, 'f', 1));
     }
 private:
-    QString m_root, m_obsolete;
+    QString m_root;
+    QStringList m_obsolete;
 };
 
 } // namespace
@@ -93,7 +95,9 @@ TileStore::TileStore(QObject *parent) :
     m_baseRoot = QDir::homePath() + "/tiles/carto";
     m_cacheRoot = m_baseRoot;
     QDir().mkpath(m_cacheRoot);
-    CacheMaintenance *maint = new CacheMaintenance(m_baseRoot, QDir::homePath() + "/tiles/roadmap");
+    CacheMaintenance *maint = new CacheMaintenance(m_baseRoot, QStringList()
+            << QDir::homePath() + "/tiles/roadmap"    // Google tiles (<= 0.1.0.5)
+            << m_baseRoot + "/dark");                 // un-toned night tiles (0.1.0.23-25)
     connect(maint, SIGNAL(finished()), maint, SLOT(deleteLater()));
     maint->start(QThread::LowPriority);
 
@@ -141,7 +145,8 @@ bool TileStore::parseKey(const QString &key, int *z, int *x, int *y)
 
 QString TileStore::rootFor(const QString &style) const
 {
-    return style == "dark_all" ? m_baseRoot + "/dark" : m_baseRoot;
+    // "night": Dark Matter re-toned at download (see tilefetcher.cpp).
+    return style == "dark_all" ? m_baseRoot + "/night" : m_baseRoot;
 }
 
 void TileStore::setStyle(const QString &style)

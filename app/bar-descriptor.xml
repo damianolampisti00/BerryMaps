@@ -8,7 +8,7 @@
     </configuration>
     <name>BerryMaps</name>
     <versionNumber>0.1.0</versionNumber>
-    <buildId>25</buildId>
+    <buildId>26</buildId>
     <description>Mappe Google native per BlackBerry 10.</description>
     <author>BerryMaps</author>
     <cascadesTheme>dark</cascadesTheme>

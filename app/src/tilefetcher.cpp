@@ -3,6 +3,9 @@
 
 #include <QElapsedTimer>
 #include <QMutexLocker>
+#include <QBuffer>
+#include <QtGui/QImage>
+#include <QtCore/qmath.h>
 
 #ifdef BBPORT_HAVE_NATIVE_TLS
 #include "mbedtls/net_sockets.h"
@@ -23,6 +26,44 @@ QByteArray headerValue(const QList<QPair<QByteArray, QByteArray> > &headers, con
     for (int i = 0; i < headers.size(); ++i)
         if (qstricmp(headers.at(i).first.constData(), name) == 0) return headers.at(i).second;
     return QByteArray();
+}
+
+// CARTO Dark Matter is near-black (all colours have luminance 3..68), which
+// is too dark on the Q5. Its tiles are re-toned once, when downloaded: the
+// background becomes slate blue (#242f3e) and the rest is stretched up to
+// ~200 so roads and labels gain contrast. The range is FIXED (not per tile),
+// so neighbouring tiles keep identical tones. Paletted PNGs (the normal case)
+// only need their palette changed.
+QRgb nightTone(QRgb px)
+{
+    const double lo = 3, hi = 68, gamma = 0.8, top = 0.78;
+    const int base[3] = { 0x24, 0x2f, 0x3e };
+    double lum = 0.299 * qRed(px) + 0.587 * qGreen(px) + 0.114 * qBlue(px);
+    double f = qBound(0.0, (lum - lo) / (hi - lo), 1.0);
+    f = qPow(f, gamma) * top;
+    return qRgba(int(base[0] + (255 - base[0]) * f + 0.5), int(base[1] + (255 - base[1]) * f + 0.5),
+                 int(base[2] + (255 - base[2]) * f + 0.5), qAlpha(px));
+}
+
+QByteArray retoneNight(const QByteArray &png)
+{
+    QImage img;
+    if (!img.loadFromData(png, "PNG")) return png;
+    if (img.format() == QImage::Format_Indexed8) {
+        QVector<QRgb> table = img.colorTable();
+        for (int i = 0; i < table.size(); ++i) table[i] = nightTone(table.at(i));
+        img.setColorTable(table);
+    } else {
+        img = img.convertToFormat(QImage::Format_ARGB32);
+        for (int y = 0; y < img.height(); ++y) {
+            QRgb *line = reinterpret_cast<QRgb *>(img.scanLine(y));
+            for (int x = 0; x < img.width(); ++x) line[x] = nightTone(line[x]);
+        }
+    }
+    QByteArray out;
+    QBuffer buf(&out);
+    buf.open(QIODevice::WriteOnly);
+    return img.save(&buf, "PNG") ? out : png;
 }
 
 int parseMaxAge(const QByteArray &cacheControl)
@@ -386,6 +427,7 @@ void TileConnection::run()
                           .arg(m_index).arg(job.key).arg(r.status).arg(r.body.size() / 1024.0, 0, 'f', 1)
                           .arg(t.elapsed()).arg(c.requestsOnConn));
             if (r.closeAfter) closeConn(c);
+            if (r.status == 200 && job.key.startsWith("dark_all:")) r.body = retoneNight(r.body);
             m_owner->deliver(job.key, r.status, r.body, r.etag, r.maxAge, QString());
         } else {
             bbportLog(QString("[tiles] conn#%1 %2 FALLITA: %3").arg(m_index).arg(job.key).arg(error));
