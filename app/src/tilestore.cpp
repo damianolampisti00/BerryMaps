@@ -82,15 +82,18 @@ private:
 } // namespace
 
 TileStore::TileStore(QObject *parent) :
-    QObject(parent), m_fetcher(0), m_quotaCount(0)
+    QObject(parent), m_fetcher(0), m_style("voyager"), m_quotaCount(0)
 {
     m_fetcher = new TileFetcher("basemaps.cartocdn.com", kConnections, this);
     connect(m_fetcher, SIGNAL(finished(QString,int,QByteArray,QByteArray,int,QString)),
             this, SLOT(onFetched(QString,int,QByteArray,QByteArray,int,QString)));
 
-    m_cacheRoot = QDir::homePath() + "/tiles/carto";
+    // Voyager tiles stay where they always were; the night style lives in a
+    // "dark" subfolder, so the startup trim covers both.
+    m_baseRoot = QDir::homePath() + "/tiles/carto";
+    m_cacheRoot = m_baseRoot;
     QDir().mkpath(m_cacheRoot);
-    CacheMaintenance *maint = new CacheMaintenance(m_cacheRoot, QDir::homePath() + "/tiles/roadmap");
+    CacheMaintenance *maint = new CacheMaintenance(m_baseRoot, QDir::homePath() + "/tiles/roadmap");
     connect(maint, SIGNAL(finished()), maint, SLOT(deleteLater()));
     maint->start(QThread::LowPriority);
 
@@ -134,6 +137,23 @@ bool TileStore::parseKey(const QString &key, int *z, int *x, int *y)
     *x = p.at(1).toInt();
     *y = p.at(2).toInt();
     return true;
+}
+
+QString TileStore::rootFor(const QString &style) const
+{
+    return style == "dark_all" ? m_baseRoot + "/dark" : m_baseRoot;
+}
+
+void TileStore::setStyle(const QString &style)
+{
+    if (style == m_style) return;
+    m_style = style;
+    m_cacheRoot = rootFor(style);
+    QDir().mkpath(m_cacheRoot);
+    // Requests of the other style still in flight are kept for its cache but
+    // never shown (see onFetched); their keys must not block this style's.
+    m_inflight.clear();
+    m_failedAt.clear();
 }
 
 QString TileStore::tilePath(int z, int x, int y) const
@@ -214,9 +234,9 @@ void TileStore::startFetch(const Want &w)
     QByteArray etag;
     bool haveFile = QFile::exists(tilePath(w.z, w.x, w.y)) && readMeta(w.z, w.x, w.y, &expiry, &etag);
     TileJob job;
-    job.key = k;
-    job.path = QString("/rastertiles/voyager/%1/%2/%3@2x.png?key=%4")
-                   .arg(w.z).arg(w.x).arg(w.y).arg(m_apiKey).toUtf8();
+    job.key = m_style + ":" + k;      // the style travels with the request
+    job.path = QString("/rastertiles/%1/%2/%3/%4@2x.png?key=%5")
+                   .arg(m_style).arg(w.z).arg(w.x).arg(w.y).arg(m_apiKey).toUtf8();
     job.etag = haveFile ? etag : QByteArray();   // expired copy on disk -> revalidate
     job.priority = w.priority;
     m_inflight.insert(k);
@@ -226,7 +246,9 @@ void TileStore::startFetch(const Want &w)
 
 void TileStore::setWanted(const QSet<QString> &keys)
 {
-    m_fetcher->setWanted(keys);
+    QSet<QString> jobKeys;
+    foreach (const QString &k, keys) jobKeys.insert(m_style + ":" + k);
+    m_fetcher->setWanted(jobKeys);
     // Jobs dropped from the fetcher queue would otherwise stay "in flight"
     // forever and never be asked again when scrolled back into view.
     QList<QString> stale;
@@ -235,12 +257,27 @@ void TileStore::setWanted(const QSet<QString> &keys)
     foreach (const QString &k, stale) m_inflight.remove(k);
 }
 
-void TileStore::onFetched(const QString &k, int status, const QByteArray &body,
+void TileStore::onFetched(const QString &jobKey, int status, const QByteArray &body,
                           const QByteArray &etag, int maxAge, const QString &error)
 {
-    m_inflight.remove(k);
+    const QString style = jobKey.section(':', 0, 0);
+    const QString k = jobKey.section(':', 1);
     int z, x, y;
     if (!parseKey(k, &z, &x, &y)) return;
+    if (style != m_style) {
+        // Arrived after a day/night switch: cache it for later, don't show it.
+        if (status == 200 && !body.isEmpty()) {
+            QString p = QString("%1/%2/%3/%4.png").arg(rootFor(style)).arg(z).arg(x).arg(y);
+            QDir().mkpath(QFileInfo(p).absolutePath());
+            QFile f(p);
+            if (f.open(QIODevice::WriteOnly | QIODevice::Truncate)) f.write(body);
+            QFile m(p.left(p.size() - 4) + ".meta");
+            if (m.open(QIODevice::WriteOnly | QIODevice::Truncate))
+                m.write(QByteArray::number(nowSecs() + (maxAge > 0 ? maxAge : kDefaultMaxAgeSecs)) + " " + etag);
+        }
+        return;
+    }
+    m_inflight.remove(k);
     QSettings s;
     s.setValue("quota/carto/day", m_quotaDay);
     s.setValue("quota/carto/count", m_quotaCount);

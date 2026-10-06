@@ -38,6 +38,46 @@ const float kRelayoutStep = geo::kTileSize / 2.0f;  // re-lay out tiles every ha
 const float kMaxFling = 300.0f;   // px; stays within the 1-tile ring loaded around the view
 const float kMinFlingSpeed = 0.3f; // px/ms
 
+// Sunrise/sunset (NOAA's simplified algorithm, a few minutes accuracy), in
+// minutes after 00:00 UTC of `date`. Returns false when the sun doesn't
+// rise/set that day (polar day/night); *alwaysUp tells which.
+bool sunEvent(const QDate &date, double lat, double lon, bool rising, double *utcMinutes, bool *alwaysUp)
+{
+    const double rad = M_PI / 180.0;
+    int n = date.dayOfYear();
+    double lngHour = lon / 15.0;
+    double t = n + ((rising ? 6.0 : 18.0) - lngHour) / 24.0;
+    double m = 0.9856 * t - 3.289;
+    double l = m + 1.916 * qSin(m * rad) + 0.020 * qSin(2 * m * rad) + 282.634;
+    l = fmod(l + 360.0, 360.0);
+    double ra = qAtan(0.91764 * qTan(l * rad)) / rad;
+    ra = fmod(ra + 360.0, 360.0);
+    ra += qFloor(l / 90.0) * 90.0 - qFloor(ra / 90.0) * 90.0;   // same quadrant as L
+    ra /= 15.0;
+    double sinDec = 0.39782 * qSin(l * rad);
+    double cosDec = qCos(qAsin(sinDec));
+    double cosH = (qCos(90.833 * rad) - sinDec * qSin(lat * rad)) / (cosDec * qCos(lat * rad));
+    if (cosH > 1) { *alwaysUp = false; return false; }
+    if (cosH < -1) { *alwaysUp = true; return false; }
+    double hh = rising ? 360.0 - qAcos(cosH) / rad : qAcos(cosH) / rad;
+    hh /= 15.0;
+    double localT = hh + ra - 0.06571 * t - 6.622;
+    double ut = fmod(localT - lngHour + 48.0, 24.0);
+    *utcMinutes = ut * 60.0;
+    return true;
+}
+
+bool isNight(double lat, double lon, const QDateTime &nowUtc)
+{
+    double rise = 0, set = 0;
+    bool up = false;
+    if (!sunEvent(nowUtc.date(), lat, lon, true, &rise, &up)) return !up;
+    if (!sunEvent(nowUtc.date(), lat, lon, false, &set, &up)) return !up;
+    double now = nowUtc.time().hour() * 60.0 + nowUtc.time().minute();
+    if (rise < set) return now < rise || now > set;
+    return now > set && now < rise;   // daylight spans midnight UTC (far east/west)
+}
+
 // Default view: Italy.
 const double kDefaultLat = 42.5;
 const double kDefaultLon = 12.5;
@@ -55,7 +95,7 @@ MapController::MapController(QObject *parent) :
     m_flinging(false), m_pinching(false), m_pinchX(0), m_pinchY(0), m_pinchScale(1),
     m_attribution(QString::fromUtf8("© OpenStreetMap contributors, © CARTO")),
     m_loc(new LocationService(this)), m_locating(false), m_following(false),
-    m_fullscreen(true), m_awake(true), m_routeZoom(-1), m_navigating(false),
+    m_fullscreen(true), m_awake(true), m_routeZoom(-1), m_navigating(false), m_night(false),
     m_loading(false), m_lastToastMs(0)
 {
     QSettings s;
@@ -86,6 +126,44 @@ MapController::MapController(QObject *parent) :
     connect(app, SIGNAL(awake()), this, SLOT(onAppAwake()));
     m_locating = s.value("location/on", false).toBool();
     m_loc->setWanted(m_locating);
+
+    m_styleMode = s.value("map/styleMode", "auto").toString();
+    m_styleTimer.setInterval(5 * 60 * 1000);   // sunset/sunrise check
+    connect(&m_styleTimer, SIGNAL(timeout()), this, SLOT(updateStyle()));
+    m_styleTimer.start();
+    updateStyle();
+}
+
+void MapController::setStyleMode(const QString &mode)
+{
+    if (mode == m_styleMode) return;
+    m_styleMode = mode;
+    QSettings().setValue("map/styleMode", mode);
+    updateStyle();
+    emit styleChanged();
+}
+
+void MapController::updateStyle()
+{
+    bool night = m_styleMode == "night";
+    if (m_styleMode == "auto") {
+        double lat, lon;
+        if (m_loc->hasFix()) { lat = m_loc->latitude(); lon = m_loc->longitude(); }
+        else { lat = geo::yToLat(m_cy, m_z); lon = geo::xToLon(m_cx, m_z); }
+        night = isNight(lat, lon, QDateTime::currentDateTime().toUTC());
+    }
+    if (night == m_night && m_store->style() == (night ? "dark_all" : "voyager")) return;
+    m_night = night;
+    m_store->setStyle(night ? "dark_all" : "voyager");
+    bbportLog(QString("[map] stile %1 (%2)").arg(night ? "notte" : "giorno").arg(m_styleMode));
+    if (m_zoomLayer) {
+        // Placeholder colour while the other style's tiles load.
+        m_zoomLayer->setBackground(Color::fromARGB(night ? 0xff1b1b1d : 0xfff2efe9));
+        dropStale();
+        releaseAll();
+        relayout();
+    }
+    emit styleChanged();
 }
 
 void MapController::attach(QObject *hostObj)
@@ -97,7 +175,7 @@ void MapController::attach(QObject *hostObj)
     }
     m_zoomLayer = Container::create().layout(AbsoluteLayout::create());
     m_zoomLayer->setImplicitLayoutAnimationsEnabled(false);
-    m_zoomLayer->setBackground(Color::fromARGB(0xfff2efe9));   // Voyager land color while tiles load
+    m_zoomLayer->setBackground(Color::fromARGB(m_night ? 0xff1b1b1d : 0xfff2efe9));   // land colour while tiles load
     // setViewport() may already have run (LayoutUpdateHandler fires early).
     m_zoomLayer->setPreferredSize(m_vw, m_vh);
     m_panLayer = Container::create().layout(AbsoluteLayout::create());

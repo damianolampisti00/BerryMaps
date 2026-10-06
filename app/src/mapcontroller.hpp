@@ -35,6 +35,9 @@ class MapController : public QObject
     // (BB10 guidelines: show an activity indicator only past 3 s of waiting).
     Q_PROPERTY(bool loading READ loading NOTIFY loadingChanged)
     Q_PROPERTY(QString version READ version CONSTANT)
+    // Map style: "auto" (night between sunset and sunrise) | "day" | "night".
+    Q_PROPERTY(QString styleMode READ styleMode WRITE setStyleMode NOTIFY styleChanged)
+    Q_PROPERTY(bool night READ night NOTIFY styleChanged)
 public:
     explicit MapController(QObject *parent = 0);
 
@@ -46,6 +49,9 @@ public:
     QString locationStatus() const;
     bool loading() const { return m_loading; }
     QString version() const;
+    QString styleMode() const { return m_styleMode; }
+    void setStyleMode(const QString &mode);
+    bool night() const { return m_night; }
 
     Q_INVOKABLE void attach(QObject *host);
     Q_INVOKABLE void setViewport(float w, float h);
@@ -86,6 +92,7 @@ signals:
     void locationStateChanged();
     void locationStatusChanged();
     void loadingChanged();
+    void styleChanged();
     // Transient problems shown as a 3 s toast with a suggested fix (guidelines).
     void toast(const QString &text);
 
@@ -100,6 +107,7 @@ private slots:
     void onAppAsleep();
     void onAppAwake();
     void onLoadingTimeout();
+    void updateStyle();
 
 private:
     void relayout();
@@ -173,6 +181,10 @@ private:
     QVector<bool> m_routeWalk;
     QHash<QString, bb::cascades::ImageView *> m_routeViews;  // "unwrapped tx/ty" -> image
     bool m_navigating;
+
+    QString m_styleMode;
+    bool m_night;
+    QTimer m_styleTimer;
     QTimer m_loadingTimer;
     bool m_loading;
     qint64 m_lastToastMs;

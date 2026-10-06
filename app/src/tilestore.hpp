@@ -33,6 +33,9 @@ public:
     void setWanted(const QSet<QString> &keys);
 
     QString status() const { return m_status; }
+    // "voyager" (day) or "dark_all" (night, CARTO Dark Matter).
+    void setStyle(const QString &style);
+    QString style() const { return m_style; }
 
 signals:
     void tileReady(const QString &key, const QString &fileUrl);
@@ -46,6 +49,7 @@ private:
     struct Want { int z, x, y, priority; };
 
     QString tilePath(int z, int x, int y) const;
+    QString rootFor(const QString &style) const;
     bool readMeta(int z, int x, int y, qint64 *expiry, QByteArray *etag) const;
     void writeMeta(int z, int x, int y, qint64 expiry, const QByteArray &etag);
     void startFetch(const Want &w);
@@ -57,7 +61,9 @@ private:
     QString m_apiKey;
     QSet<QString> m_inflight;
     QHash<QString, qint64> m_failedAt;       // ms epoch of the last failure, for backoff
-    QString m_cacheRoot;
+    QString m_cacheRoot;     // current style's folder
+    QString m_baseRoot;      // <data>/tiles/carto
+    QString m_style;
     QString m_status;
     QString m_quotaDay;
     int m_quotaCount;

@@ -142,6 +142,11 @@ Page {
             title: "Info"
             onTriggered: infoSheet.open()
         }
+        // Guidelines: Help on the left, Settings on the right of the app menu.
+        settingsAction: SettingsActionItem {
+            title: "Impostazioni"
+            onTriggered: settingsSheet.open()
+        }
     }
 
     actions: [
@@ -739,6 +744,67 @@ Page {
     attachedObjects: [
         SystemToast {
             id: toast
+        },
+        Sheet {
+            id: settingsSheet
+            Page {
+                titleBar: TitleBar {
+                    title: "Impostazioni"
+                    dismissAction: ActionItem {
+                        title: "Chiudi"
+                        onTriggered: settingsSheet.close()
+                    }
+                }
+                ScrollView {
+                    Container {
+                        leftPadding: ui.du(2)
+                        rightPadding: ui.du(2)
+                        topPadding: ui.du(1)
+                        bottomPadding: ui.du(2)
+                        Header { title: "Mappa" }
+                        RadioGroup {
+                            Option {
+                                text: "Automatica"
+                                description: "Notte tra il tramonto e l'alba, calcolati per dove sei"
+                                value: "auto"
+                                selected: map.styleMode == "auto"
+                            }
+                            Option {
+                                text: "Giorno"
+                                value: "day"
+                                selected: map.styleMode == "day"
+                            }
+                            Option {
+                                text: "Notte"
+                                value: "night"
+                                selected: map.styleMode == "night"
+                            }
+                            onSelectedValueChanged: map.styleMode = selectedValue
+                        }
+                        Header { title: "Navigazione" }
+                        Container {
+                            layout: StackLayout { orientation: LayoutOrientation.LeftToRight }
+                            topPadding: ui.du(1)
+                            Label {
+                                text: "Indicazioni vocali"
+                                layoutProperties: StackLayoutProperties { spaceQuota: 1 }
+                                verticalAlignment: VerticalAlignment.Center
+                            }
+                            ToggleButton {
+                                enabled: voice.available
+                                checked: voice.enabled
+                                onCheckedChanged: voice.enabled = checked
+                            }
+                        }
+                        Label {
+                            visible: !voice.available
+                            multiline: true
+                            text: "Non disponibili: serve il server di BerryAssistant configurato sul telefono."
+                            textStyle.base: SystemDefaults.TextStyles.SmallText
+                        }
+                    }
+                }
+            }
         },
         // "Salva luogo": Casa / Lavoro / Preferito.
         SystemListDialog {
