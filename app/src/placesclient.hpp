@@ -26,11 +26,13 @@ class PlacesClient : public QObject
     Q_OBJECT
     Q_PROPERTY(QVariantList suggestions READ suggestions NOTIFY suggestionsChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
+    Q_PROPERTY(QVariantList favorites READ favorites NOTIFY favoritesChanged)
 public:
     explicit PlacesClient(QObject *parent = 0);
 
     QVariantList suggestions() const { return m_suggestions; }
     bool busy() const { return m_busy; }
+    QVariantList favorites() const;
 
     // Map center used to bias suggestions towards the visible area.
     Q_INVOKABLE void setBias(double lat, double lon);
@@ -39,11 +41,21 @@ public:
     Q_INVOKABLE void cancel();                            // search closed
     Q_INVOKABLE void reverseGeocode(double lat, double lon); // -> placeResolved()
 
+    // Favourites (Casa / Lavoro / others). Google terms: Places coordinates
+    // may not be kept, place IDs may. A place that came from the search is
+    // saved as its place ID and resolved again (Place Details, Essentials)
+    // when opened; a long-pressed point is the user's own, saved as lat/lon.
+    // kind: "home" | "work" | "fav"
+    Q_INVOKABLE void saveCurrent(const QString &kind, const QString &name, double lat, double lon);
+    Q_INVOKABLE void removeFavorite(const QString &id);
+    Q_INVOKABLE void openFavorite(const QString &id);   // -> placeResolved()
+
 signals:
     void suggestionsChanged();
     void busyChanged();
     void placeResolved(const QString &name, const QString &address, double lat, double lon);
     void error(const QString &text);
+    void favoritesChanged();
 
 private slots:
     void sendAutocomplete();
@@ -55,6 +67,9 @@ private:
     bool allow(const char *api, int perDay);
     void setBusy(bool busy);
     void newSession();
+    void requestDetails(const QString &placeId, const QString &name);
+    QVariantList loadFavorites() const;
+    void storeFavorites(const QVariantList &list);
 
     QNetworkAccessManager *m_nam;
     QString m_apiKey;
@@ -64,6 +79,7 @@ private:
     QPointer<QNetworkReply> m_acReply;
     QVariantList m_suggestions;
     QString m_chosenName;
+    QString m_lastPlaceId;     // place ID of the place last shown (empty for map points)
     bool m_busy;
     double m_biasLat, m_biasLon;
     bool m_haveBias;

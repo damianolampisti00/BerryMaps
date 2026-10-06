@@ -182,8 +182,14 @@ void PlacesClient::choose(int index)
     m_debounce.stop();
     if (m_acReply) m_acReply->abort();
     QVariantMap item = m_suggestions.at(index).toMap();
-    m_chosenName = item.value("main").toString();
-    QUrl url("https://places.googleapis.com/v1/places/" + item.value("placeId").toString());
+    requestDetails(item.value("placeId").toString(), item.value("main").toString());
+    m_session.clear();   // the details call closes the billing session
+}
+
+void PlacesClient::requestDetails(const QString &placeId, const QString &name)
+{
+    m_chosenName = name;
+    QUrl url("https://places.googleapis.com/v1/places/" + placeId);
     url.addQueryItem("languageCode", "it");
     if (!m_session.isEmpty()) url.addQueryItem("sessionToken", m_session);
     QNetworkRequest req(url);
@@ -191,8 +197,8 @@ void PlacesClient::choose(int index)
     // Essentials fields only (see the class comment).
     req.setRawHeader("X-Goog-FieldMask", "id,formattedAddress,location");
     QNetworkReply *r = m_nam->get(req);
+    r->setProperty("placeId", placeId);
     connect(r, SIGNAL(finished()), this, SLOT(onDetailsReply()));
-    m_session.clear();   // the details call closes the billing session
     setBusy(true);
 }
 
@@ -215,6 +221,7 @@ void PlacesClient::onDetailsReply()
     }
     m_suggestions.clear();
     emit suggestionsChanged();
+    m_lastPlaceId = r->property("placeId").toString();
     emit placeResolved(m_chosenName, place.value("formattedAddress").toString(),
                        loc.value("latitude").toDouble(), loc.value("longitude").toDouble());
 }
@@ -265,6 +272,116 @@ void PlacesClient::onGeocodeReply()
     QString address = results.isEmpty() ? QString()
                                         : results.at(0).toMap().value("formatted_address").toString();
     if (address.isEmpty()) address = QString::fromUtf8("Nessun indirizzo trovato qui");
+    m_lastPlaceId.clear();   // a map point: the user's own coordinates
     emit placeResolved(QString::fromUtf8("Punto selezionato"), address,
                        r->property("lat").toDouble(), r->property("lon").toDouble());
+}
+
+// ------------------------------------------------------------------ favourites
+
+QVariantList PlacesClient::loadFavorites() const
+{
+    QSettings s;
+    QVariantList list;
+    int n = s.beginReadArray("favorites");
+    for (int i = 0; i < n; ++i) {
+        s.setArrayIndex(i);
+        QVariantMap f;
+        f["id"] = s.value("id");
+        f["kind"] = s.value("kind");
+        f["name"] = s.value("name");
+        f["placeId"] = s.value("placeId");
+        f["lat"] = s.value("lat");
+        f["lon"] = s.value("lon");
+        list << f;
+    }
+    s.endArray();
+    return list;
+}
+
+void PlacesClient::storeFavorites(const QVariantList &list)
+{
+    QSettings s;
+    s.remove("favorites");
+    s.beginWriteArray("favorites", list.size());
+    for (int i = 0; i < list.size(); ++i) {
+        s.setArrayIndex(i);
+        QVariantMap f = list.at(i).toMap();
+        s.setValue("id", f.value("id"));
+        s.setValue("kind", f.value("kind"));
+        s.setValue("name", f.value("name"));
+        s.setValue("placeId", f.value("placeId"));
+        s.setValue("lat", f.value("lat"));
+        s.setValue("lon", f.value("lon"));
+    }
+    s.endArray();
+    emit favoritesChanged();
+}
+
+// For the list: Casa, Lavoro, then the others, with a display label.
+QVariantList PlacesClient::favorites() const
+{
+    QVariantList all = loadFavorites(), out;
+    const char *order[3] = { "home", "work", "fav" };
+    for (int k = 0; k < 3; ++k) {
+        for (int i = 0; i < all.size(); ++i) {
+            QVariantMap f = all.at(i).toMap();
+            if (f.value("kind").toString() != order[k]) continue;
+            f["label"] = k == 0 ? QString("Casa") : k == 1 ? QString("Lavoro") : f.value("name").toString();
+            f["detail"] = k < 2 ? QString() : QString("Preferito");
+            out << f;
+        }
+    }
+    return out;
+}
+
+void PlacesClient::saveCurrent(const QString &kind, const QString &name, double lat, double lon)
+{
+    QVariantList list = loadFavorites();
+    if (kind == "home" || kind == "work") {   // only one Casa / Lavoro
+        for (int i = list.size() - 1; i >= 0; --i)
+            if (list.at(i).toMap().value("kind").toString() == kind) list.removeAt(i);
+    }
+    QVariantMap f;
+    f["id"] = QUuid::createUuid().toString().mid(1, 8);
+    f["kind"] = kind;
+    // Casa/Lavoro keep no name at all; other favourites keep the label the
+    // user typed/confirmed (Google names/addresses are not copied).
+    f["name"] = kind == "fav" ? name : QString();
+    if (!m_lastPlaceId.isEmpty()) {
+        f["placeId"] = m_lastPlaceId;          // resolved again when opened
+    } else {
+        f["lat"] = lat;                        // the user's own point
+        f["lon"] = lon;
+    }
+    list << f;
+    storeFavorites(list);
+}
+
+void PlacesClient::removeFavorite(const QString &id)
+{
+    QVariantList list = loadFavorites();
+    for (int i = list.size() - 1; i >= 0; --i)
+        if (list.at(i).toMap().value("id").toString() == id) list.removeAt(i);
+    storeFavorites(list);
+}
+
+void PlacesClient::openFavorite(const QString &id)
+{
+    QVariantList list = favorites();
+    for (int i = 0; i < list.size(); ++i) {
+        QVariantMap f = list.at(i).toMap();
+        if (f.value("id").toString() != id) continue;
+        QString label = f.value("label").toString();
+        if (!f.value("placeId").toString().isEmpty()) {
+            if (!allow("details", kDetailsPerDay)) return;
+            m_debounce.stop();
+            if (m_acReply) m_acReply->abort();
+            requestDetails(f.value("placeId").toString(), label);
+        } else {
+            m_lastPlaceId.clear();
+            emit placeResolved(label, QString(), f.value("lat").toDouble(), f.value("lon").toDouble());
+        }
+        return;
+    }
 }

@@ -48,8 +48,19 @@ Page {
         page.searching = true;
         page.actionBarVisibility = ChromeVisibility.Hidden;
         searchField.text = "";
-        sugModel.clear();
+        page.showFavorites();
         searchField.requestFocus();
+    }
+
+    // Empty search field: Casa / Lavoro / favourites instead of suggestions.
+    function showFavorites() {
+        sugModel.clear();
+        var favs = places.favorites;
+        for (var i = 0; i < favs.length; ++i) {
+            var f = favs[i];
+            sugModel.append({ fav: true, favId: f.id, main: f.label,
+                              secondary: f.detail != "" ? f.detail : (f.kind == "home" ? "Casa" : "Lavoro") });
+        }
     }
 
     function closeSearch() {
@@ -149,6 +160,12 @@ Page {
             shortcuts: [ Shortcut { key: "m" } ]
             onTriggered: map.locateMe()
         },
+        ActionItem {
+            title: "Salva luogo"
+            enabled: page.placeShown
+            ActionBar.placement: ActionBarPlacement.InOverflow
+            onTriggered: saveDialog.show()
+        },
         InvokeActionItem {
             title: "Condividi"
             enabled: page.placeShown
@@ -175,6 +192,9 @@ Page {
 
     onCreationCompleted: {
         Application.themeSupport.setPrimaryColor(Color.create("#1a73e8"));
+        saveDialog.appendItem("Casa");
+        saveDialog.appendItem("Lavoro");
+        saveDialog.appendItem("Preferito");
         map.attach(mapHost);
         map.toast.connect(function (text) {
             toast.body = text;
@@ -184,7 +204,11 @@ Page {
             toast.body = text;
             toast.show();
         });
+        places.favoritesChanged.connect(function () {
+            if (page.searching && searchField.text.trim() == "") page.showFavorites();
+        });
         places.suggestionsChanged.connect(function () {
+            if (searchField.text.trim() == "") return;   // the favourites stay
             sugModel.clear();
             sugModel.append(places.suggestions);
         });
@@ -602,15 +626,43 @@ Page {
                 preferredHeight: ui.du(44)
                 layout: StackListLayout { orientation: LayoutOrientation.BottomToTop }
                 dataModel: ArrayDataModel { id: sugModel }
+                function itemType(data, indexPath) {
+                    return data.fav ? "fav" : "suggestion";
+                }
+                function removeFav(id) {
+                    places.removeFavorite(id);
+                }
                 listItemComponents: [
                     ListItemComponent {
+                        type: "suggestion"
                         StandardListItem {
                             title: ListItemData.main
                             description: ListItemData.secondary
                         }
+                    },
+                    // Favourite: press and hold -> Elimina (context menu).
+                    ListItemComponent {
+                        type: "fav"
+                        StandardListItem {
+                            id: favItem
+                            title: ListItemData.main
+                            description: ListItemData.secondary
+                            contextActions: [
+                                ActionSet {
+                                    DeleteActionItem {
+                                        title: "Elimina"
+                                        onTriggered: favItem.ListItem.view.removeFav(ListItemData.favId)
+                                    }
+                                }
+                            ]
+                        }
                     }
                 ]
-                onTriggered: places.choose(indexPath[0])
+                onTriggered: {
+                    var item = sugModel.data(indexPath);
+                    if (item.fav) places.openFavorite(item.favId);
+                    else places.choose(indexPath[0]);
+                }
             }
             Container {
                 horizontalAlignment: HorizontalAlignment.Right
@@ -636,7 +688,10 @@ Page {
                         // Enter = first (nearest) suggestion.
                         if (sugModel.size() > 0) places.choose(0);
                     }
-                    onTextChanging: places.autocomplete(text)
+                    onTextChanging: {
+                        if (text.trim() == "") page.showFavorites();
+                        places.autocomplete(text);
+                    }
                 }
                 ActivityIndicator {
                     running: places.busy
@@ -684,6 +739,39 @@ Page {
     attachedObjects: [
         SystemToast {
             id: toast
+        },
+        // "Salva luogo": Casa / Lavoro / Preferito.
+        SystemListDialog {
+            id: saveDialog
+            title: "Salva luogo"
+            selectionMode: ListSelectionMode.Single
+            confirmButton.label: "Salva"
+            // Items are appended in the Page's onCreationCompleted (bb.system
+            // dialogs are plain QObjects without creationCompleted).
+            onFinished: {
+                if (result != SystemUiResult.ConfirmButtonSelection || selectedIndices.length == 0) return;
+                var i = selectedIndices[0];
+                if (i == 2) {
+                    namePrompt.inputField.defaultText =
+                        page.placeName == "Punto selezionato" ? "" : page.placeName;
+                    namePrompt.show();
+                    return;
+                }
+                places.saveCurrent(i == 0 ? "home" : "work", "", page.placeLat, page.placeLon);
+                toast.body = i == 0 ? "Salvato come Casa" : "Salvato come Lavoro";
+                toast.show();
+            }
+        },
+        // The favourite's label is the user's own (Google names aren't copied).
+        SystemPrompt {
+            id: namePrompt
+            title: "Nome del preferito"
+            confirmButton.label: "Salva"
+            onFinished: {
+                if (result != SystemUiResult.ConfirmButtonSelection) return;
+                var name = inputFieldTextEntry().trim();
+                places.saveCurrent("fav", name != "" ? name : "Preferito", page.placeLat, page.placeLon);
+            }
         },
         // Active Frame during guidance (720x720 devices: 310x211, title footer
         // added by the system). Updated with the guidance, nothing else.
