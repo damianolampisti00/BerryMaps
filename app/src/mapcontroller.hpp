@@ -106,6 +106,8 @@ private:
     void setLayerTranslation(float x, float y);
     void applyZoom(int newZoom, float focusX, float focusY);
     void releaseAll();
+    void retireForZoom(double factor);
+    void dropStale();
     bb::cascades::ImageView *obtainView();
     void normalizeCenter();
     void updateLocationOverlay();
@@ -123,6 +125,7 @@ private:
     bb::cascades::Container *m_host;
     bb::cascades::Container *m_zoomLayer;   // viewport-sized, scaled during pinch
     bb::cascades::Container *m_panLayer;    // translated during pan/fling
+    bb::cascades::Container *m_staleLayer;  // previous zoom's tiles, scaled, under the new ones
     bb::cascades::Container *m_tileLayer;   // tiles (inside m_panLayer)
     bb::cascades::Container *m_routeLayer;  // route line images (inside m_panLayer, above tiles)
     bb::cascades::Container *m_overlay;     // location symbols (inside m_panLayer, above tiles)
@@ -147,6 +150,10 @@ private:
     QHash<QString, bb::cascades::ImageView *> m_active;  // wrapped key -> view
     QSet<QString> m_shown;                                // keys whose image is set
     QList<bb::cascades::ImageView *> m_free;
+    // After a zoom change the old tiles stay visible (scaled) until the new
+    // visible ones have loaded: no grey flash. World rect at the current zoom.
+    struct StaleTile { bb::cascades::ImageView *view; double wx, wy, size; };
+    QList<StaleTile> m_stale;
 
     QTimer m_settleTimer;       // saves the position once movement stops
     QString m_attribution;

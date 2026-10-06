@@ -48,7 +48,7 @@ const int kDefaultZoom = 6;
 MapController::MapController(QObject *parent) :
     QObject(parent),
     m_store(new TileStore(this)),
-    m_host(0), m_zoomLayer(0), m_panLayer(0), m_tileLayer(0), m_routeLayer(0), m_overlay(0),
+    m_host(0), m_zoomLayer(0), m_panLayer(0), m_staleLayer(0), m_tileLayer(0), m_routeLayer(0), m_overlay(0),
     m_accuracyView(0), m_arrowView(0), m_dotView(0), m_dotGrey(false),
     m_pinView(0), m_hasPin(false), m_pinLat(0), m_pinLon(0), m_fling(0),
     m_cx(0), m_cy(0), m_originX(0), m_originY(0), m_z(kDefaultZoom), m_vw(720), m_vh(720), m_tx(0), m_ty(0),
@@ -108,6 +108,9 @@ void MapController::attach(QObject *hostObj)
     m_overlay->setImplicitLayoutAnimationsEnabled(false);
     m_routeLayer = Container::create().layout(AbsoluteLayout::create());
     m_routeLayer->setImplicitLayoutAnimationsEnabled(false);
+    m_staleLayer = Container::create().layout(AbsoluteLayout::create());
+    m_staleLayer->setImplicitLayoutAnimationsEnabled(false);
+    m_panLayer->add(m_staleLayer);    // old zoom level, below everything else
     m_panLayer->add(m_tileLayer);
     m_panLayer->add(m_routeLayer);    // route line above the tiles...
     m_panLayer->add(m_overlay);       // ...and the location symbols above both
@@ -185,6 +188,50 @@ ImageView *MapController::obtainView()
     return iv;
 }
 
+void MapController::retireForZoom(double factor)
+{
+    dropStale();   // a previous, still unfinished zoom: its leftovers go first
+    const int T = geo::kTileSize;
+    QHash<QString, ImageView *>::iterator it = m_active.begin();
+    for (; it != m_active.end(); ++it) {
+        ImageView *iv = it.value();
+        AbsoluteLayoutProperties *lp = qobject_cast<AbsoluteLayoutProperties *>(iv->layoutProperties());
+        if (!m_shown.contains(it.key()) || !lp) {
+            iv->setVisible(false);
+            iv->resetImage();
+            m_free << iv;
+            continue;
+        }
+        // Same map area at the new zoom: position and size scale by `factor`.
+        StaleTile st;
+        st.view = iv;
+        st.wx = (lp->positionX() + m_originX) * factor;
+        st.wy = (lp->positionY() + m_originY) * factor;
+        st.size = T * factor;
+        m_tileLayer->remove(iv);
+        m_staleLayer->add(iv);
+        iv->setPreferredSize(float(st.size), float(st.size));
+        m_stale << st;
+    }
+    m_active.clear();
+    m_shown.clear();
+}
+
+void MapController::dropStale()
+{
+    const int T = geo::kTileSize;
+    for (int i = 0; i < m_stale.size(); ++i) {
+        ImageView *iv = m_stale.at(i).view;
+        m_staleLayer->remove(iv);
+        iv->setVisible(false);
+        iv->resetImage();
+        iv->setPreferredSize(T, T);
+        m_tileLayer->add(iv);
+        m_free << iv;
+    }
+    m_stale.clear();
+}
+
 void MapController::releaseAll()
 {
     QHash<QString, ImageView *>::iterator it = m_active.begin();
@@ -207,6 +254,13 @@ void MapController::relayout()
     const double originY = m_cy - m_vh / 2.0;
     m_originX = originX;
     m_originY = originY;
+    for (int i = 0; i < m_stale.size(); ++i) {
+        AbsoluteLayoutProperties *lp = qobject_cast<AbsoluteLayoutProperties *>(m_stale.at(i).view->layoutProperties());
+        if (lp) {
+            lp->setPositionX(float(m_stale.at(i).wx - originX));
+            lp->setPositionY(float(m_stale.at(i).wy - originY));
+        }
+    }
     const int vx0 = geo::floorDiv(originX, T), vx1 = geo::floorDiv(originX + m_vw - 1, T);
     const int vy0 = geo::floorDiv(originY, T), vy1 = geo::floorDiv(originY + m_vh - 1, T);
 
@@ -387,7 +441,7 @@ void MapController::applyZoom(int newZoom, float focusX, float focusY)
     m_cx = fx * factor - (focusX - m_vw / 2.0);
     m_cy = fy * factor - (focusY - m_vh / 2.0);
     m_z = newZoom;
-    releaseAll();
+    retireForZoom(factor);
     relayout();
     emit zoomChanged();
     if (m_following) centerOnLocation();   // zoom buttons/keys keep the dot centered
@@ -441,6 +495,7 @@ void MapController::updateLoading()
     foreach (const QString &k, m_visible)
         if (!m_shown.contains(k)) { missing = true; break; }
     if (!missing) {
+        if (!m_stale.isEmpty()) dropStale();   // the new zoom level is complete
         m_loadingTimer.stop();
         if (m_loading) { m_loading = false; emit loadingChanged(); }
     } else if (!m_loading && !m_loadingTimer.isActive()) {
@@ -607,8 +662,9 @@ void MapController::showPin(double lat, double lon, bool center)
     if (center && !m_flinging && !m_pinching) {
         setFollowing(false);
         if (m_z < 16) {
+            const double factor = qPow(2.0, 16 - m_z);
             m_z = 16;
-            releaseAll();
+            retireForZoom(factor);
             emit zoomChanged();
         }
         m_cx = geo::lonToX(lon, m_z);
@@ -684,8 +740,9 @@ void MapController::setNavigating(bool on)
         setFollowing(true);
         m_loc->setFast(true);
         if (m_z < 17) {
+            const double factor = qPow(2.0, 17 - m_z);
             m_z = 17;
-            releaseAll();
+            retireForZoom(factor);
             emit zoomChanged();
         }
         if (m_loc->hasFix()) centerOnLocation();
