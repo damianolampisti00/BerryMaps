@@ -3,6 +3,7 @@
 #include "routeclient.hpp"
 #include "navigator.hpp"
 #include "voiceguide.hpp"
+#include "invokehandler.hpp"
 #include "bbportlog.hpp"
 
 #include <bb/cascades/Application>
@@ -33,6 +34,8 @@ Q_DECL_EXPORT int main(int argc, char **argv)
     Navigator nav(&routing, map.locationService(), &map);
     VoiceGuide voice;
     nav.setVoice(&voice);
+    // Created before the event loop: an invocation that launched the app is delivered to it.
+    InvokeHandler invoker(&places);
 
     QmlDocument *qml = QmlDocument::create("asset:///main.qml").parent(&map);
     qml->setContextProperty("map", &map);
@@ -40,6 +43,7 @@ Q_DECL_EXPORT int main(int argc, char **argv)
     qml->setContextProperty("routing", &routing);
     qml->setContextProperty("nav", &nav);
     qml->setContextProperty("voice", &voice);
+    qml->setContextProperty("invoker", &invoker);
     logQmlErrors(qml);
     AbstractPane *root = qml->createRootObject<AbstractPane>();
     if (!root) {

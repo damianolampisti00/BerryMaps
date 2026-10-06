@@ -385,3 +385,46 @@ void PlacesClient::openFavorite(const QString &id)
         return;
     }
 }
+
+// ------------------------------------------------------------------ forward geocoding
+
+void PlacesClient::geocodeAddress(const QString &address)
+{
+    if (m_apiKey.isEmpty()) {
+        emit error("Chiave Google mancante: /accounts/1000/shared/misc/berrymaps_apikey.txt");
+        return;
+    }
+    if (!allow("geocode", kGeocodePerDay)) return;
+    QUrl url("https://maps.googleapis.com/maps/api/geocode/json");
+    url.addQueryItem("address", address);
+    url.addQueryItem("language", "it");
+    url.addQueryItem("region", "it");
+    url.addQueryItem("key", m_apiKey);   // the TLS log strips queries
+    QNetworkReply *r = m_nam->get(QNetworkRequest(url));
+    r->setProperty("query", address);
+    connect(r, SIGNAL(finished()), this, SLOT(onForwardGeocodeReply()));
+    setBusy(true);
+}
+
+void PlacesClient::onForwardGeocodeReply()
+{
+    QNetworkReply *r = qobject_cast<QNetworkReply *>(sender());
+    if (!r) return;
+    r->deleteLater();
+    setBusy(false);
+    int status = r->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    if (status != 200) {
+        emit error(networkMessage(r));
+        return;
+    }
+    QVariantList results = parseJson(r->readAll()).value("results").toList();
+    if (results.isEmpty()) {
+        emit error("Indirizzo non trovato: " + r->property("query").toString());
+        return;
+    }
+    QVariantMap first = results.at(0).toMap();
+    QVariantMap loc = first.value("geometry").toMap().value("location").toMap();
+    m_lastPlaceId = first.value("place_id").toString();
+    emit addressResolved(r->property("query").toString(), first.value("formatted_address").toString(),
+                         loc.value("lat").toDouble(), loc.value("lng").toDouble());
+}

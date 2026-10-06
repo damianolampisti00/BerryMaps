@@ -8,7 +8,7 @@
     </configuration>
     <name>BerryMaps</name>
     <versionNumber>0.1.0</versionNumber>
-    <buildId>24</buildId>
+    <buildId>25</buildId>
     <description>Mappe Google native per BlackBerry 10.</description>
     <author>BerryMaps</author>
     <cascadesTheme>dark</cascadesTheme>
@@ -21,6 +21,43 @@
     </icon>
     <asset path="icon.png">icon.png</asset>
     <asset path="assets">assets</asset>
+    <!-- Places from other apps (PROGETTO.md §24). The Q5 has no BlackBerry Maps
+         app and Contacts/Calendar invoke it by name, so BerryMaps takes what is
+         sent without a fixed target: shared addresses, geo: URIs, full Google
+         Maps links and BB10 map requests. -->
+    <invoke-target id="it.berrymaps.app.open">
+        <type>APPLICATION</type>
+        <invoke-target-name>BerryMaps</invoke-target-name>
+        <icon>
+            <image>icon.png</image>
+        </icon>
+        <filter>
+            <action>bb.action.OPEN</action>
+            <action>bb.action.VIEW</action>
+            <mime-type>*</mime-type>
+            <property var="uris" value="geo:"/>
+        </filter>
+        <filter>
+            <action>bb.action.OPEN</action>
+            <action>bb.action.VIEW</action>
+            <mime-type>*</mime-type>
+            <property var="uris" value="https://maps.google.,http://maps.google.,https://www.google.com/maps,https://www.google.it/maps,https://google.com/maps,https://maps.app.goo.gl,https://goo.gl/maps"/>
+        </filter>
+        <filter>
+            <action>bb.action.OPEN</action>
+            <action>bb.action.VIEW</action>
+            <mime-type>application/vnd.rim.map.action-v1</mime-type>
+        </filter>
+        <filter>
+            <action>bb.action.SHARE</action>
+            <mime-type>application/vnd.blackberry.string.address</mime-type>
+        </filter>
+        <filter>
+            <action>bb.action.SHARE</action>
+            <mime-type>*</mime-type>
+            <property var="uris" value="geo:"/>
+        </filter>
+    </invoke-target>
     <permission system="true">run_native</permission>
     <permission>access_internet</permission>
     <permission>access_location_services</permission>

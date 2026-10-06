@@ -205,6 +205,17 @@ Page {
             toast.body = text;
             toast.show();
         });
+        // A place sent by another app (shared address, geo: or Google Maps link).
+        invoker.openPlace.connect(function (name, address, lat, lon) {
+            if (page.searching) page.closeSearch();
+            if (nav.active) return;   // never interrupt guidance
+            map.showPin(lat, lon, true);
+            page.showPlace(name, address, lat, lon);
+        });
+        invoker.message.connect(function (text) {
+            toast.body = text;
+            toast.show();
+        });
         places.error.connect(function (text) {
             toast.body = text;
             toast.show();

@@ -924,6 +924,32 @@ Principi rilevanti per BerryMaps e come sono applicati (BerryMaps 0.1.0.11):
 
 ---
 
+## 24. Rifiniture: zoom, preferiti, mappa notturna, luoghi da altre app (BerryMaps 0.1.0.21–0.1.0.25)
+
+- **Zoom senza sfondo grigio** (0.1.0.21): le tessere del livello precedente passano in uno strato sotto le nuove,
+  scalate (×2 / ×½), e vengono tolte quando tutte le nuove tessere visibili sono arrivate (o al cambio successivo).
+- **Preferiti** (0.1.0.22): "Salva luogo" nel menu azioni → Casa / Lavoro / Preferito (nome confermato dall'utente);
+  elenco nella ricerca a campo vuoto, anche per scegliere la partenza; Elimina con pressione lunga. Termini Google:
+  luoghi Google salvati solo come place ID (ririsolti con Place Details Essentials all'apertura), punti scelti con
+  la pressione lunga come coordinate dell'utente; nessun nome/indirizzo Google memorizzato.
+- **Mappa notturna e Impostazioni** (0.1.0.23–24): CARTO `dark_all` @2x (verificato: 512 px, ~23 KB), cache in
+  `tiles/carto/dark`; modalità Automatica/Giorno/Notte; in automatico notte tra tramonto e alba calcolati (NOAA,
+  verificato per Milano il 6/10: 07:27 / 18:55 contro ~07:26 / 18:52 reali), controllo ogni 5 minuti; ogni
+  richiesta porta lo stile, quindi un cambio giorno/notte con tessere in volo non mescola gli stili.
+  Impostazioni nel menu dall'alto (a destra): stile mappa, indicazioni vocali.
+- **Luoghi da altre app** (0.1.0.25): sul Q5 **non c'è più l'app Mappe** (nessun gestore nel registro
+  `/pps/system/navigator/invokes`, solo BlackBerry Places per `maps.blackberry.com`) e Contatti/Calendario la
+  invocano per nome, quindi non si possono intercettare. BerryMaps si registra per ciò che arriva senza destinatario:
+  - Condividi di un indirizzo (`application/vnd.blackberry.string.address`) → Geocoding → scheda;
+  - link `geo:` (apri/visualizza/condividi), anche `geo:0,0?q=indirizzo` e `?q=lat,lon(etichetta)`;
+  - link Google Maps completi (`@lat,lon`, `q=`, `ll=`, `/place/nome`); i link brevi `maps.app.goo.gl` no (richiedono
+    di seguire il redirect);
+  - richieste mappa BB10 `application/vnd.rim.map.action-v1` (JSON con `center`/`locations`/`placemark`).
+  Registrazione verificata nel registro del telefono; la ricezione non è simulabile da shell root (il navigator
+  accetta invocazioni solo da app) → da provare a mano.
+
+---
+
 ## Fonti
 - Prezzi e quote: [Pricing categories](https://developers.google.com/maps/billing-and-pricing/pricing-categories),
   [SKU details](https://developers.google.com/maps/billing-and-pricing/sku-details),

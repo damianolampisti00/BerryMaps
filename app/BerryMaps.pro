@@ -13,13 +13,13 @@ INCLUDEPATH += src src/tls
 SOURCES += src/main.cpp \
            src/tilefetcher.cpp \
            src/tilestore.cpp \
-           src/mapcontroller.cpp src/locationservice.cpp src/placesclient.cpp src/routeclient.cpp src/navigator.cpp src/voiceguide.cpp src/oggopusdecoder.cpp \
+           src/mapcontroller.cpp src/locationservice.cpp src/placesclient.cpp src/routeclient.cpp src/navigator.cpp src/voiceguide.cpp src/oggopusdecoder.cpp src/invokehandler.cpp \
            src/tls/tlsnetworkaccessmanager.cpp src/tls/tlsnetworkreply.cpp
 
 HEADERS += src/geo.hpp \
            src/tilefetcher.hpp \
            src/tilestore.hpp \
-           src/mapcontroller.hpp src/locationservice.hpp src/placesclient.hpp src/routeclient.hpp src/navigator.hpp src/polyline.hpp src/voiceguide.hpp src/oggopusdecoder.hpp \
+           src/mapcontroller.hpp src/locationservice.hpp src/placesclient.hpp src/routeclient.hpp src/navigator.hpp src/polyline.hpp src/voiceguide.hpp src/oggopusdecoder.hpp src/invokehandler.hpp \
            src/tls/tlsnetworkaccessmanager.hpp src/tls/tlsnetworkreply.hpp \
            src/tls/bbportlog.hpp
 

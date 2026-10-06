@@ -40,6 +40,8 @@ public:
     Q_INVOKABLE void choose(int index);                   // -> placeResolved()
     Q_INVOKABLE void cancel();                            // search closed
     Q_INVOKABLE void reverseGeocode(double lat, double lon); // -> placeResolved()
+    // Address text -> coordinates (Geocoding API) -> addressResolved().
+    void geocodeAddress(const QString &address);
 
     // Favourites (Casa / Lavoro / others). Google terms: Places coordinates
     // may not be kept, place IDs may. A place that came from the search is
@@ -56,12 +58,14 @@ signals:
     void placeResolved(const QString &name, const QString &address, double lat, double lon);
     void error(const QString &text);
     void favoritesChanged();
+    void addressResolved(const QString &name, const QString &address, double lat, double lon);
 
 private slots:
     void sendAutocomplete();
     void onAutocompleteReply();
     void onDetailsReply();
     void onGeocodeReply();
+    void onForwardGeocodeReply();
 
 private:
     bool allow(const char *api, int perDay);
