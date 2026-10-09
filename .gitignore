@@ -9,3 +9,6 @@ stage/
 *apikey*.txt
 *cartokey*.txt
 *_key.txt
+
+# Local install settings (phone IP, root key path)
+package.config.ps1

@@ -4,15 +4,24 @@
 # Usage:  powershell -File package.ps1
 #         powershell -File package.ps1 -Install               (also copies to the
 #                     phone's Downloads and installs it, over SSH as root)
-#         powershell -File package.ps1 -Install -PhoneIp 192.168.1.xxx
-#                     (IP changes on reboot/DHCP; defaults to the last known one)
+#         powershell -File package.ps1 -Install -PhoneIp 192.168.1.xxx -RootKey C:\path\to\id_rsa
+#
+# -PhoneIp / -RootKey default to $PhoneIp / $RootKey from ..\package.config.ps1
+# (not in git; copy package.config.example.ps1).
 param(
     [switch]$Install,
-    [string]$PhoneIp = '',
-    [string]$RootKey = ''
+    [string]$PhoneIp,
+    [string]$RootKey
 )
 $ErrorActionPreference = 'Stop'
 $c = $PSScriptRoot
+$config = Join-Path (Split-Path $c) 'package.config.ps1'
+if (Test-Path $config) {
+    $cliPhoneIp = $PhoneIp; $cliRootKey = $RootKey
+    . $config
+    if ($cliPhoneIp) { $PhoneIp = $cliPhoneIp }
+    if ($cliRootKey) { $RootKey = $cliRootKey }
+}
 $h = 'C:\bbndk\ndk\host_10_3_1_12\win32\x86'
 $jre = 'C:\bbndk\features\com.qnx.tools.jre.win32.x86_64_1.7.0.51\jre'  # system Java 25 crashes the packager
 $env:QNX_HOST = $h
@@ -52,6 +61,7 @@ Pop-Location
 Write-Host "Created $bar (version $full)"
 
 if (-not $Install) { exit 0 }
+if (-not $PhoneIp -or -not $RootKey) { throw '-Install needs -PhoneIp and -RootKey (or package.config.ps1)' }
 
 # --- copy to the phone and install, over SSH as root (see tools/installbar.sh) ---
 # Done through bash/ssh, not PowerShell's own ssh/scp: PowerShell's scp reads
