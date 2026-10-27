@@ -1,4 +1,5 @@
 #include "networklocator.hpp"
+#include "beaconsubmitter.hpp"
 #include "bbportlog.hpp"
 #ifdef BBPORT_HAVE_NATIVE_TLS
 #include "tlsnetworkaccessmanager.hpp"
@@ -22,15 +23,16 @@ namespace {
 const int kPerDay = 100;                  // beaconDB is a volunteer-run service: stay light
 const qint64 kMinGapMs = 5 * 60 * 1000;   // at most one beaconDB request every 5 minutes
 const qint64 kLocalGapMs = 10000;         // local lookups: cheap, but no need for more
-const int kMaxAccessPoints = 15;
+const int kMaxAccessPoints = 15;          // per position request
+const int kMaxSubmitAccessPoints = 50;    // per beaconDB measurement
 const double kLearnAccuracy = 25;         // metres: only good GPS fixes teach the cache
 const double kLearnMaxSpeed = 3;          // m/s: the system scan may be seconds old
 const qint64 kLearnGapMs = 10000;
 
-QVariantList wifiAccessPoints(const QList<WifiObservation> &seen)
+QVariantList wifiAccessPoints(const QList<WifiObservation> &seen, int max = kMaxAccessPoints)
 {
     QVariantList aps;
-    for (int i = 0; i < seen.size() && aps.size() < kMaxAccessPoints; ++i) {
+    for (int i = 0; i < seen.size() && aps.size() < max; ++i) {
         const quint64 b = seen.at(i).bssid;
         QVariantMap ap;
         ap["macAddress"] = QString().sprintf("%02x:%02x:%02x:%02x:%02x:%02x",
@@ -75,7 +77,7 @@ QVariantList cellTowers()
 } // namespace
 
 NetworkLocator::NetworkLocator(QObject *parent) :
-    QObject(parent), m_nam(0)
+    QObject(parent), m_nam(0), m_submitter(new BeaconSubmitter(this))
 {
 #ifdef BBPORT_HAVE_NATIVE_TLS
     m_nam = new TlsNetworkAccessManager(this);
@@ -107,6 +109,8 @@ void NetworkLocator::learn(double lat, double lon, double accuracy, double speed
     m_sinceLearn.start();
     QList<WifiObservation> seen = WifiCache::scan();
     if (!seen.isEmpty()) m_cache.learn(seen, lat, lon, accuracy);
+    if (m_submitter->enabled())
+        m_submitter->add(lat, lon, accuracy, speed, wifiAccessPoints(seen, kMaxSubmitAccessPoints), cellTowers());
 }
 
 bool NetworkLocator::locate()

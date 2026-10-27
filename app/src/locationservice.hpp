@@ -53,6 +53,7 @@ public:
     // Safety requirement: an old or imprecise position must not look precise.
     bool reliable() const;
     QString status() const { return m_status; }
+    NetworkLocator *networkLocator() const { return m_net; }
 
 signals:
     void updated();

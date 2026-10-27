@@ -1,6 +1,8 @@
 #include "mapcontroller.hpp"
 #include "tilestore.hpp"
 #include "locationservice.hpp"
+#include "networklocator.hpp"
+#include "beaconsubmitter.hpp"
 #include "geo.hpp"
 #include "bbportlog.hpp"
 
@@ -118,6 +120,7 @@ MapController::MapController(QObject *parent) :
 
     connect(m_loc, SIGNAL(updated()), this, SLOT(onLocationUpdated()));
     connect(m_loc, SIGNAL(statusChanged()), this, SIGNAL(locationStatusChanged()));
+    connect(m_loc->networkLocator()->submitter(), SIGNAL(changed()), this, SIGNAL(contributeChanged()));
     // GPS while the screen is on, map visible or not (PROGETTO.md §6.4).
     Application *app = Application::instance();
     connect(app, SIGNAL(fullscreen()), this, SLOT(onAppFullscreen()));
@@ -149,6 +152,10 @@ void MapController::setStyleMode(const QString &mode)
     updateStyle();
     emit styleChanged();
 }
+
+bool MapController::contributeData() const { return m_loc->networkLocator()->submitter()->enabled(); }
+void MapController::setContributeData(bool on) { m_loc->networkLocator()->submitter()->setEnabled(on); }
+int MapController::contributedCount() const { return m_loc->networkLocator()->submitter()->sentTotal(); }
 
 void MapController::updateStyle()
 {

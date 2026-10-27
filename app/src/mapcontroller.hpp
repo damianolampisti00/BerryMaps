@@ -40,6 +40,9 @@ class MapController : public QObject
     // Map style: "auto" (night between sunset and sunrise) | "day" | "night".
     Q_PROPERTY(QString styleMode READ styleMode WRITE setStyleMode NOTIFY styleChanged)
     Q_PROPERTY(bool night READ night NOTIFY styleChanged)
+    // Optional: send good GPS fixes with the Wi-Fi/cell seen there to beaconDB.
+    Q_PROPERTY(bool contributeData READ contributeData WRITE setContributeData NOTIFY contributeChanged)
+    Q_PROPERTY(int contributedCount READ contributedCount NOTIFY contributeChanged)
 public:
     explicit MapController(QObject *parent = 0);
 
@@ -53,6 +56,9 @@ public:
     QString version() const;
     QString styleMode() const { return m_styleMode; }
     void setStyleMode(const QString &mode);
+    bool contributeData() const;
+    void setContributeData(bool on);
+    int contributedCount() const;
     bool night() const { return m_night; }
 
     Q_INVOKABLE void attach(QObject *host);
@@ -97,6 +103,7 @@ signals:
     void locationStatusChanged();
     void loadingChanged();
     void styleChanged();
+    void contributeChanged();
     // Transient problems shown as a 3 s toast with a suggested fix (guidelines).
     void toast(const QString &text);
 

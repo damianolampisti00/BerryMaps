@@ -882,6 +882,29 @@ Page {
                             text: "Non disponibili: serve il server di BerryAssistant configurato sul telefono."
                             textStyle.base: SystemDefaults.TextStyles.SmallText
                         }
+                        Header { title: "Posizione" }
+                        Container {
+                            layout: StackLayout { orientation: LayoutOrientation.LeftToRight }
+                            topPadding: ui.du(1)
+                            Label {
+                                text: "Invia dati a beaconDB"
+                                layoutProperties: StackLayoutProperties { spaceQuota: 1 }
+                                verticalAlignment: VerticalAlignment.Center
+                            }
+                            ToggleButton {
+                                checked: map.contributeData
+                                onCheckedChanged: map.contributeData = checked
+                            }
+                        }
+                        Label {
+                            multiline: true
+                            text: "Con un buon segnale GPS invia le reti Wi-Fi e la cella che vedi, con la posizione, " +
+                                  "a beaconDB: un database pubblico e senza Google che BerryMaps usa per trovarti " +
+                                  "in un attimo. beaconDB conserva le misure per ricerca senza condividerle con terzi " +
+                                  "e pubblica solo dati aggregati." +
+                                  (map.contributedCount > 0 ? " Misure inviate finora: " + map.contributedCount + "." : "")
+                            textStyle.base: SystemDefaults.TextStyles.SmallText
+                        }
                     }
                 }
             }

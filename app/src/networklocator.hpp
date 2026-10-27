@@ -8,6 +8,8 @@
 
 #include "wificache.hpp"
 
+class BeaconSubmitter;
+
 class QNetworkAccessManager;
 class QNetworkReply;
 
@@ -34,8 +36,10 @@ public:
     // Returns whether a position was given or a request sent.
     bool locate();
     // A GPS fix: if good and slow enough, teach the local cache the visible
-    // access points (at most every 10 s).
+    // access points (at most every 10 s) and, if enabled, queue them with the
+    // cell for beaconDB.
     void learn(double lat, double lon, double accuracy, double speed);
+    BeaconSubmitter *submitter() const { return m_submitter; }
 
 signals:
     void located(double lat, double lon, double accuracy);
@@ -53,6 +57,7 @@ private:
     QElapsedTimer m_sinceLocal;
     QElapsedTimer m_sinceLearn;
     WifiCache m_cache;
+    BeaconSubmitter *m_submitter;
 };
 
 #endif /* NETWORKLOCATOR_HPP_ */
