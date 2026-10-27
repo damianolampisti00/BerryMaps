@@ -6,6 +6,7 @@
 #include <QBuffer>
 #include <QtGui/QImage>
 #include <QtCore/qmath.h>
+#include <QVector>
 
 #ifdef BBPORT_HAVE_NATIVE_TLS
 #include "mbedtls/net_sockets.h"
@@ -32,8 +33,7 @@ QByteArray headerValue(const QList<QPair<QByteArray, QByteArray> > &headers, con
 // is too dark on the Q5. Its tiles are re-toned once, when downloaded: the
 // background becomes slate blue (#242f3e) and the rest is stretched up to
 // ~200 so roads and labels gain contrast. The range is FIXED (not per tile),
-// so neighbouring tiles keep identical tones. Paletted PNGs (the normal case)
-// only need their palette changed.
+// so neighbouring tiles keep identical tones.
 QRgb nightTone(QRgb px)
 {
     const double lo = 3, hi = 68, gamma = 0.8, top = 0.78;
@@ -45,25 +45,69 @@ QRgb nightTone(QRgb px)
                  int(base[2] + (255 - base[2]) * f + 0.5), qAlpha(px));
 }
 
-QByteArray retoneNight(const QByteArray &png)
+// The labels of Dark Matter have thick dark outlines (~5 px at @2x), heavy
+// on the light roads even when toned down (user, 2026-10-26). So a night
+// tile is made of two CARTO layers: dark_nolabels, re-toned, with
+// dark_only_labels drawn over it after peeling one pixel off the outline.
+// In the labels layer the outline is the only thing touching transparent
+// pixels, so the peel never eats into the letters. The labels are then
+// recoloured: text as Dark Matter's text (luminance 74), outline as its
+// halo (4) at 80% of its alpha, both through nightTone.
+QByteArray composeNight(const QByteArray &basePng, const QByteArray &labelsPng)
 {
-    QImage img;
-    if (!img.loadFromData(png, "PNG")) return png;
-    if (img.format() == QImage::Format_Indexed8) {
-        QVector<QRgb> table = img.colorTable();
-        for (int i = 0; i < table.size(); ++i) table[i] = nightTone(table.at(i));
-        img.setColorTable(table);
-    } else {
-        img = img.convertToFormat(QImage::Format_ARGB32);
-        for (int y = 0; y < img.height(); ++y) {
-            QRgb *line = reinterpret_cast<QRgb *>(img.scanLine(y));
-            for (int x = 0; x < img.width(); ++x) line[x] = nightTone(line[x]);
+    QImage base, labels;
+    if (!base.loadFromData(basePng, "PNG") || !labels.loadFromData(labelsPng, "PNG")) return QByteArray();
+    base = base.convertToFormat(QImage::Format_RGB32);
+    labels = labels.convertToFormat(QImage::Format_ARGB32);
+    const int w = base.width(), h = base.height();
+    if (labels.width() != w || labels.height() != h) return QByteArray();
+
+    for (int y = 0; y < h; ++y) {
+        QRgb *line = reinterpret_cast<QRgb *>(base.scanLine(y));
+        for (int x = 0; x < w; ++x) line[x] = nightTone(line[x]);
+    }
+
+    // Per pixel: alpha, and how much of it is text (0 outline .. 1 text).
+    QVector<uchar> alpha(w * h);
+    QVector<float> text(w * h);
+    for (int y = 0; y < h; ++y) {
+        const QRgb *line = reinterpret_cast<const QRgb *>(labels.constScanLine(y));
+        for (int x = 0; x < w; ++x) {
+            alpha[y * w + x] = uchar(qAlpha(line[x]));
+            text[y * w + x] = float(qBound(0.0, (qGreen(line[x]) - 46) / 63.0, 1.0));
+        }
+    }
+    QVector<int> peel;
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            const int i = y * w + x;
+            if (!alpha[i] || text[i] >= 0.03f) continue;
+            if ((x > 0 && !alpha[i - 1]) || (x < w - 1 && !alpha[i + 1])
+                    || (y > 0 && !alpha[i - w]) || (y < h - 1 && !alpha[i + w]))
+                peel.append(i);
+        }
+    }
+    for (int k = 0; k < peel.size(); ++k) alpha[peel.at(k)] = 0;
+
+    const QRgb tc = nightTone(qRgb(74, 74, 74)), hc = nightTone(qRgb(4, 4, 4));
+    for (int y = 0; y < h; ++y) {
+        QRgb *line = reinterpret_cast<QRgb *>(base.scanLine(y));
+        for (int x = 0; x < w; ++x) {
+            const int i = y * w + x;
+            if (!alpha[i]) continue;
+            const double t = text[i], a = alpha[i] / 255.0 * (0.8 + 0.2 * t);
+            const QRgb b = line[x];
+            const double r = t * qRed(tc) + (1 - t) * qRed(hc);
+            const double g = t * qGreen(tc) + (1 - t) * qGreen(hc);
+            const double bl = t * qBlue(tc) + (1 - t) * qBlue(hc);
+            line[x] = qRgb(int(qRed(b) * (1 - a) + r * a + 0.5), int(qGreen(b) * (1 - a) + g * a + 0.5),
+                           int(qBlue(b) * (1 - a) + bl * a + 0.5));
         }
     }
     QByteArray out;
     QBuffer buf(&out);
     buf.open(QIODevice::WriteOnly);
-    return img.save(&buf, "PNG") ? out : png;
+    return base.save(&buf, "PNG") ? out : QByteArray();
 }
 
 int parseMaxAge(const QByteArray &cacheControl)
@@ -356,6 +400,28 @@ bool doRequest(Conn &c, const TileJob &job, Response *r, QString *error)
     return true;
 }
 
+// One request, on the connection if it is still up. A reused connection may
+// have been closed by the server while idle: one retry on a fresh connection
+// before reporting a failure.
+bool fetch(Conn &c, const TileJob &job, Response *r, QString *error)
+{
+    bool ok = false;
+    for (int attempt = 0; attempt < 2 && !ok && !c.owner->stopping(); ++attempt) {
+        bool reused = c.connected;
+        if (!c.connected && !openConn(c, error)) break;
+        ok = doRequest(c, job, r, error);
+        if (!ok) {
+            closeConn(c);
+            if (!reused) break;
+        }
+    }
+    if (ok) {
+        ++c.requestsOnConn;
+        if (r->closeAfter) closeConn(c);
+    }
+    return ok;
+}
+
 } // namespace
 
 void TileConnection::run()
@@ -409,25 +475,39 @@ void TileConnection::run()
         t.start();
         QString error;
         Response r;
-        bool ok = false;
-        // A reused connection may have been closed by Google while idle: one
-        // retry on a fresh connection before reporting a failure.
-        for (int attempt = 0; attempt < 2 && !ok && !m_owner->stopping(); ++attempt) {
-            bool reused = c.connected;
-            if (!c.connected && !openConn(c, &error)) break;
-            ok = doRequest(c, job, &r, &error);
-            if (!ok) {
-                closeConn(c);
-                if (!reused) break;
+        bool ok;
+        if (job.key.startsWith("dark_all:")) {
+            // Night: two layers, composed (see composeNight). Always fetched
+            // whole: the composed tile has no ETag of its own.
+            TileJob base = job, labels = job;
+            base.etag.clear();
+            labels.etag.clear();
+            base.path.replace("/dark_all/", "/dark_nolabels/");
+            labels.path.replace("/dark_all/", "/dark_only_labels/");
+            Response rl;
+            ok = fetch(c, base, &r, &error);
+            if (ok && r.status == 200) {
+                ok = fetch(c, labels, &rl, &error);
+                if (ok && rl.status != 200) {
+                    r.status = rl.status;
+                    r.body.clear();
+                } else if (ok) {
+                    r.body = composeNight(r.body, rl.body);
+                    r.maxAge = qMin(r.maxAge, rl.maxAge);
+                    if (r.body.isEmpty()) {
+                        ok = false;
+                        error = "composizione della tessera notturna fallita";
+                    }
+                }
             }
+            r.etag.clear();
+        } else {
+            ok = fetch(c, job, &r, &error);
         }
         if (ok) {
-            ++c.requestsOnConn;
             bbportLog(QString("[tiles] conn#%1 %2 -> %3, %4 KB, %5 ms (richiesta %6 sulla connessione)")
                           .arg(m_index).arg(job.key).arg(r.status).arg(r.body.size() / 1024.0, 0, 'f', 1)
                           .arg(t.elapsed()).arg(c.requestsOnConn));
-            if (r.closeAfter) closeConn(c);
-            if (r.status == 200 && job.key.startsWith("dark_all:")) r.body = retoneNight(r.body);
             m_owner->deliver(job.key, r.status, r.body, r.etag, r.maxAge, QString());
         } else {
             bbportLog(QString("[tiles] conn#%1 %2 FALLITA: %3").arg(m_index).arg(job.key).arg(error));

@@ -97,7 +97,9 @@ TileStore::TileStore(QObject *parent) :
     QDir().mkpath(m_cacheRoot);
     CacheMaintenance *maint = new CacheMaintenance(m_baseRoot, QStringList()
             << QDir::homePath() + "/tiles/roadmap"    // Google tiles (<= 0.1.0.5)
-            << m_baseRoot + "/dark");                 // un-toned night tiles (0.1.0.23-25)
+            << m_baseRoot + "/dark"                   // un-toned night tiles (0.1.0.23-25)
+            << m_baseRoot + "/night"                  // night tiles with the old dark halos (<= 0.1.0.27)
+            << m_baseRoot + "/night2");               // night tiles with lightened halos (0.1.0.28)
     connect(maint, SIGNAL(finished()), maint, SLOT(deleteLater()));
     maint->start(QThread::LowPriority);
 
@@ -145,8 +147,9 @@ bool TileStore::parseKey(const QString &key, int *z, int *x, int *y)
 
 QString TileStore::rootFor(const QString &style) const
 {
-    // "night": Dark Matter re-toned at download (see tilefetcher.cpp).
-    return style == "dark_all" ? m_baseRoot + "/night" : m_baseRoot;
+    // "night3": Dark Matter composed at download (see tilefetcher.cpp); a new
+    // folder whenever the look changes, the old one goes in the startup trim.
+    return style == "dark_all" ? m_baseRoot + "/night3" : m_baseRoot;
 }
 
 void TileStore::setStyle(const QString &style)
