@@ -7,8 +7,8 @@
        <asset path="arm/o.le-v7/BerryMaps.so" entry="true" type="Qnx/Elf">BerryMaps.so</asset>
     </configuration>
     <name>BerryMaps</name>
-    <versionNumber>0.1.0</versionNumber>
-    <buildId>41</buildId>
+    <versionNumber>0.1.1</versionNumber>
+    <buildId>42</buildId>
     <description>Mappe Google native per BlackBerry 10.</description>
     <author>BerryMaps</author>
     <cascadesTheme>dark</cascadesTheme>
