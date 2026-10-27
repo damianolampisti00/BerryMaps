@@ -12,6 +12,8 @@
 #include <QVector>
 #include <QtGui/QColor>
 
+#include <bb/platform/DeviceLockState>
+
 namespace bb { namespace cascades { class Container; class ImageView; class TranslateTransition; } }
 class TileStore;
 class LocationService;
@@ -106,6 +108,7 @@ private slots:
     void onAppBackground();
     void onAppAsleep();
     void onAppAwake();
+    void onLockStateChanged(bb::platform::DeviceLockState::Type state);
     void onLoadingTimeout();
     void updateStyle();
 
@@ -170,7 +173,8 @@ private:
     LocationService *m_loc;
     bool m_locating;            // user wants the dot (persisted)
     bool m_following;           // map recenters on each fix
-    bool m_fullscreen, m_awake;
+    bool m_fullscreen;
+    bool m_awake;               // device unlocked: screen on (not Application::asleep)
 
     QSet<QString> m_visible;    // keys of the tiles actually on screen
 

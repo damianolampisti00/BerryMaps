@@ -11,6 +11,7 @@ const int kFastIntervalMs = 1000;
 const int kSlowIntervalMs = 5000;
 const int kStaleMs = 15000;            // no fix for this long -> grey dot (unless stationary)
 const int kNetworkFallbackMs = 60000;  // no GPS fix for this long -> ask the network
+const int kAcquireGraceMs = 180000;    // keep searching this long after start when sent away
 const double kMaxReliableAccuracy = 50; // metres
 const double kMovingSpeed = 2.0;       // m/s: above this the GPS course is the heading
 const double kMinField = 20e-6, kMaxField = 70e-6;  // tesla; Earth's field in Italy ~46 uT
@@ -27,6 +28,8 @@ LocationService::LocationService(QObject *parent) :
 {
     m_tick.setInterval(300);   // compass refresh + staleness check
     connect(&m_tick, SIGNAL(timeout()), this, SLOT(onTick()));
+    m_stopGrace.setSingleShot(true);
+    connect(&m_stopGrace, SIGNAL(timeout()), this, SLOT(apply()));
     connect(m_net, SIGNAL(located(double, double, double)),
             this, SLOT(onNetworkLocated(double, double, double)));
 }
@@ -70,8 +73,24 @@ void LocationService::setStatus(const QString &s)
 void LocationService::apply()
 {
     bool shouldRun = m_wanted && m_foreground;
-    if (shouldRun && !m_running) start();
-    else if (!shouldRun && m_running) stop();
+    if (shouldRun) {
+        m_stopGrace.stop();
+        if (!m_running) start();
+    } else if (m_running) {
+        // Stopping before the first fix throws away the satellites found so far
+        // and the next start is cold again (the screen timeout used to cut most
+        // searches short): finish the search first, up to 3 minutes from start.
+        qint64 searched = m_sinceStart.elapsed();
+        if (m_wanted && !m_fixThisRun && searched < kAcquireGraceMs) {
+            if (!m_stopGrace.isActive()) {
+                m_stopGrace.start(int(kAcquireGraceMs - searched));
+                bbportLog("[gps] in secondo piano: continuo la ricerca fino al primo fix");
+            }
+        } else {
+            m_stopGrace.stop();
+            stop();
+        }
+    }
 }
 
 void LocationService::start()
@@ -91,9 +110,10 @@ void LocationService::start()
     m_src->setPreferredPositioningMethods(QGeoPositionInfoSource::SatellitePositioningMethods);
     m_src->setProperty("provider", "gnss");
     m_src->setProperty("fixType", "gps_autonomous");
-    // No stationary detection yet: with the phone lying still it paused updates
-    // before the first fix was ever delivered (the dot never appeared on the
-    // Q5). It is switched on in onPosition() once this run has a fix.
+    // No stationary detection: before the first fix it paused updates for good
+    // with the phone lying still (the dot never appeared on the Q5), and
+    // switching it on after the first fix (stop, set, start) left the Q10 with
+    // "Lost tracking" and no further fixes, even in the foreground.
     m_fixThisRun = false;
     m_src->setUpdateInterval(m_fast ? kFastIntervalMs : kSlowIntervalMs);
     connect(m_src, SIGNAL(positionUpdated(const QGeoPositionInfo &)),
@@ -149,6 +169,7 @@ void LocationService::onPosition(const QGeoPositionInfo &info)
         ? info.attribute(QGeoPositionInfo::HorizontalAccuracy) : -1;
     m_speed = info.hasAttribute(QGeoPositionInfo::GroundSpeed)
         ? info.attribute(QGeoPositionInfo::GroundSpeed) : 0;
+    m_net->learn(m_lat, m_lon, m_accuracy, m_speed);   // local Wi-Fi cache
     if (m_speed > kMovingSpeed && info.hasAttribute(QGeoPositionInfo::Direction)) {
         m_heading = info.attribute(QGeoPositionInfo::Direction);
         m_headingValid = true;
@@ -161,11 +182,11 @@ void LocationService::onPosition(const QGeoPositionInfo &info)
         m_fixThisRun = true;
         bbportLog(QString("[gps] primo fix dopo %1 ms, precisione %2 m")
                       .arg(m_sinceStart.elapsed()).arg(m_accuracy, 0, 'f', 0));
-        // Now that there is a position, let the location manager pause updates
-        // while the phone is still (battery); the property is read at start.
-        m_src->stopUpdates();
-        m_src->setProperty("stationaryDetectionEnabled", true);
-        m_src->startUpdates();
+        // Searching on only to get this fix: now it can stop.
+        if (m_stopGrace.isActive()) {
+            m_stopGrace.stop();
+            QMetaObject::invokeMethod(this, "apply", Qt::QueuedConnection);
+        }
     }
     Q_UNUSED(first);
     setStatus(m_accuracy > kMaxReliableAccuracy ? "Segnale GPS debole: posizione approssimativa" : QString());

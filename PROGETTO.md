@@ -320,9 +320,20 @@ Nei casi A e B:
   20–2000 m in ~1 s. Usata solo all'avvio se non c'è un fix GPS recente, e al massimo ogni 5 minuti.
 - Requisito: la scansione Wi-Fi potrebbe richiedere permessi aggiuntivi o non funzionare con Wi-Fi spento
   (da verificare).
-- **Implementato** in `NetworkLocator` (0.1.0.30, permesso `access_wifi_public`): sul Q10, al chiuso,
-  7 reti Wi-Fi + 1 cella → **precisione 19 m in 0,6 s**. Pallino sempre grigio (mai "affidabile"); il primo
-  fix GPS lo sostituisce, e si torna alla rete dopo 60 s senza GPS (una richiesta ogni 5 minuti al massimo).
+- **Implementato** in `NetworkLocator` (permesso `access_wifi_public`). Prima prova con Google (0.1.0.30): sul
+  Q10, al chiuso, 7 reti Wi-Fi + 1 cella → **precisione 19 m in 0,6 s**. Pallino sempre grigio (mai
+  "affidabile"); il primo fix GPS lo sostituisce, e si torna alla rete dopo 60 s senza GPS (una richiesta ogni
+  5 minuti al massimo).
+- Dalla 0.1.0.31 la fonte è **beaconDB** (`api.beacondb.net/v1/geolocate`, API compatibile MLS/Ichnaea, senza
+  chiave, User-Agent obbligatorio): niente Google. Copertura Wi-Fi ancora scarsa; ripiego sulla cella (dump
+  finale di Mozilla Location Service), mai sull'IP. Limite app: 100 richieste/giorno. Sul Q10 a casa: nessuna
+  rete Wi-Fi nota, solo la cella → 522 m.
+- Dalla 0.1.0.33 **archivio Wi-Fi locale** (`WifiCache`, `wifi_cache.dat` nella cartella dati): ogni fix GPS
+  entro 25 m e sotto i 3 m/s associa le reti visibili alla posizione (media pesata sul segnale, reti spostate
+  di oltre 500 m ripartono da zero, esclusi MAC locali e `_nomap`, 20.000 reti al massimo). È interrogato per
+  primo, offline, ogni 10 s; beaconDB solo se nessuna rete è nota. Nulla esce dal telefono.
+- Trappola Qt 4.8: `QElapsedTimer` non ha costruttore, finché non si chiama `invalidate()` contiene memoria
+  sporca e `isValid()`/`elapsed()` danno valori a caso (bloccava ogni tentativo nella 0.1.0.33-34).
 
 ### 6.4 Profili di posizione (il cuore del risparmio energetico)
 | Stato | Sorgente | Periodo | Flag | Note |
@@ -332,12 +343,19 @@ Nei casi A e B:
 | Ricerca/schede, mappa non visibile | nessuna (o passive) | — | passive | Zero costo |
 | Navigazione a piedi | GNSS | 2 s | stationary detection | |
 | Navigazione auto/bici | GNSS | 1 s | — | Serve precisione per le manovre |
-| App ridotta (Active Frame), non in navigazione | **spento** | — | — | |
+| App ridotta (Active Frame), non in navigazione, schermo acceso | GNSS | 5 s | stationary detection, background | Impara l'archivio Wi-Fi locale (dalla 0.1.0.34) |
 | App ridotta, in navigazione | GNSS | 1 s | background | Active Frame con prossima manovra |
 | Schermo spento, non in navigazione | **spento** | — | — | |
 
-- Fermare il GPS **subito** quando l'app va in `thumbnail`/`invisible` (segnali di `bb::Application`)
-  se non si sta navigando; riaccenderlo su `fullscreen`.
+- Fermare il GPS **subito** quando lo schermo si spegne (`asleep`) se non si sta navigando; riaccenderlo su
+  `awake`. Con l'app ridotta (`thumbnail`/`invisible`) il GPS resta acceso a 5 s, perché l'archivio Wi-Fi
+  locale impari anche così (scelta dell'utente, 27 ottobre 2026; prima si spegneva).
+- **Schermo spento = telefono bloccato** (`bb::platform::HomeScreen::lockStateChanged`):
+  `bb::Application::asleep()` arriva appena l'app viene ridotta, non quando si spegne lo schermo.
+- Se lo schermo si spegne **prima del primo fix**, la ricerca continua fino a 3 minuti dall'avvio: fermarla
+  butta via i satelliti trovati e la ricerca successiva riparte a freddo.
+- **Niente stationary detection** sul Q10: attivarla dopo il primo fix (stop, proprietà, start) lasciava
+  "Lost tracking" e nessun altro fix, anche in primo piano (0.1.0.35).
 - Smoothing della posizione: filtro semplice (media pesata sulla precisione) per evitare il punto che "balla";
   in navigazione, aggancio alla strada del percorso (map-matching, §7).
 

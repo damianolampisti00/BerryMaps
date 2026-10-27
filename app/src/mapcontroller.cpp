@@ -13,6 +13,7 @@
 #include <QtCore/qmath.h>
 
 #include <bb/ApplicationInfo>
+#include <bb/platform/HomeScreen>
 #include <bb/ImageData>
 #include <bb/PixelFormat>
 #include <bb/cascades/Image>
@@ -117,13 +118,19 @@ MapController::MapController(QObject *parent) :
 
     connect(m_loc, SIGNAL(updated()), this, SLOT(onLocationUpdated()));
     connect(m_loc, SIGNAL(statusChanged()), this, SIGNAL(locationStatusChanged()));
-    // GPS only while the map is actually on screen (PROGETTO.md §6.4).
+    // GPS while the screen is on, map visible or not (PROGETTO.md §6.4).
     Application *app = Application::instance();
     connect(app, SIGNAL(fullscreen()), this, SLOT(onAppFullscreen()));
     connect(app, SIGNAL(thumbnail()), this, SLOT(onAppBackground()));
     connect(app, SIGNAL(invisible()), this, SLOT(onAppBackground()));
     connect(app, SIGNAL(asleep()), this, SLOT(onAppAsleep()));
     connect(app, SIGNAL(awake()), this, SLOT(onAppAwake()));
+    // Application::asleep() comes as soon as the app is minimized, so the
+    // screen state is the lock state: BB10 locks when the screen goes off.
+    bb::platform::HomeScreen *home = new bb::platform::HomeScreen(this);
+    connect(home, SIGNAL(lockStateChanged(bb::platform::DeviceLockState::Type)),
+            this, SLOT(onLockStateChanged(bb::platform::DeviceLockState::Type)));
+    onLockStateChanged(home->lockState());
     m_locating = s.value("location/on", false).toBool();
     m_loc->setWanted(m_locating);
 
@@ -604,7 +611,7 @@ void MapController::setFollowing(bool on)
 {
     if (on == m_following) return;
     m_following = on;
-    m_loc->setFast(on);   // 1 s updates only while the map follows the dot
+    updateForeground();   // 1 s updates only while the map follows the dot
     emit locationStateChanged();
 }
 
@@ -699,15 +706,26 @@ void MapController::updateLocationOverlay()
 
 void MapController::updateForeground()
 {
-    // While navigating the GPS keeps running with the app minimized
-    // (run_when_backgrounded); otherwise only with the map on screen.
-    m_loc->setForeground((m_fullscreen && m_awake) || m_navigating);
+    // The GPS keeps running with the app minimized while the screen is on, so
+    // the local Wi-Fi cache keeps learning (run_when_backgrounded), at 5 s
+    // unless navigating; with the screen off only while navigating.
+    m_loc->setForeground(m_awake || m_navigating);
+    m_loc->setFast(m_following && (m_fullscreen || m_navigating));
 }
 
-void MapController::onAppFullscreen() { m_fullscreen = true; updateForeground(); }
-void MapController::onAppBackground() { m_fullscreen = false; updateForeground(); saveState(); }
-void MapController::onAppAsleep() { m_awake = false; updateForeground(); }
-void MapController::onAppAwake() { m_awake = true; updateForeground(); }
+void MapController::onAppFullscreen() { bbportLog("[app] a schermo intero"); m_fullscreen = true; updateForeground(); }
+void MapController::onAppBackground() { bbportLog("[app] ridotta"); m_fullscreen = false; updateForeground(); saveState(); }
+void MapController::onAppAsleep() { bbportLog("[app] inattiva"); }
+void MapController::onAppAwake() { bbportLog("[app] attiva"); }
+
+void MapController::onLockStateChanged(bb::platform::DeviceLockState::Type state)
+{
+    bool unlocked = state != bb::platform::DeviceLockState::ScreenLocked
+        && state != bb::platform::DeviceLockState::PasswordLocked;
+    bbportLog(unlocked ? "[app] telefono sbloccato" : "[app] telefono bloccato (schermo spento)");
+    m_awake = unlocked;
+    updateForeground();
+}
 
 // ------------------------------------------------------------------ pin / search
 

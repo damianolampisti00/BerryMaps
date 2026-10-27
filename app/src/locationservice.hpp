@@ -25,7 +25,7 @@ QTM_USE_NAMESPACE
 // stationary detection pauses updates while the phone is still.
 //
 // Until the GPS has a fix, and again after a minute without one, the dot comes
-// from NetworkLocator (Google Geolocation, Wi-Fi + cell): approximate, so never
+// from NetworkLocator (beaconDB, Wi-Fi + cell): approximate, so never
 // "reliable". Any GPS fix replaces it.
 //
 // Runs only while wanted AND the app is in the foreground with the screen on.
@@ -63,10 +63,10 @@ private slots:
     void onTimeout();
     void onTick();
     void onNetworkLocated(double lat, double lon, double accuracy);
+    void apply();
 
 private:
     bool gpsFresh() const;
-    void apply();
     void start();
     void stop();
     void setStatus(const QString &s);
@@ -77,11 +77,12 @@ private:
     QMagnetometer *m_magnet;
     NetworkLocator *m_net;
     QTimer m_tick;
+    QTimer m_stopGrace;         // wanted off-screen: search on until the first fix
     QElapsedTimer m_sinceFix;
     QElapsedTimer m_sinceStart;
     bool m_wanted, m_foreground, m_fast, m_running;
     bool m_hasFix, m_stationary;
-    bool m_fixThisRun;          // stationary detection is armed only after it
+    bool m_fixThisRun;          // off-screen searches stop only after it
     bool m_fromNetwork;         // the current position is NetworkLocator's
     double m_lat, m_lon, m_accuracy, m_speed;
     bool m_headingValid;

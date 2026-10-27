@@ -5,8 +5,6 @@
 #endif
 
 #include <QDate>
-#include <QDir>
-#include <QFile>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
@@ -19,38 +17,28 @@
 #include <bb/device/CellularNetworkInfo>
 #include <bb/device/CellularTechnology>
 
-#include <wifi/wifi_service.h>
-
 namespace {
 
-const int kPerDay = 300;                  // PROGETTO.md §22: Geolocation 300/day
-const qint64 kMinGapMs = 5 * 60 * 1000;   // at most one request every 5 minutes
+const int kPerDay = 100;                  // beaconDB is a volunteer-run service: stay light
+const qint64 kMinGapMs = 5 * 60 * 1000;   // at most one beaconDB request every 5 minutes
+const qint64 kLocalGapMs = 10000;         // local lookups: cheap, but no need for more
 const int kMaxAccessPoints = 15;
+const double kLearnAccuracy = 25;         // metres: only good GPS fixes teach the cache
+const double kLearnMaxSpeed = 3;          // m/s: the system scan may be seconds old
+const qint64 kLearnGapMs = 10000;
 
-QVariantList wifiAccessPoints()
+QVariantList wifiAccessPoints(const QList<WifiObservation> &seen)
 {
     QVariantList aps;
-    wifi_scan_results_t *results = 0;
-    wifi_scan_report_t report;
-    int count = 0;
-    // The latest scan the system made; with Wi-Fi off the list is empty.
-    if (wifi_get_scan_results(&results, &report, &count) != WIFI_SUCCESS || !results)
-        return aps;
-    for (int i = 1; i <= count && aps.size() < kMaxAccessPoints; ++i) {
-        char ssid[WIFI_MAX_SSID_BUFFER_LEN] = { 0 };
-        uint8_t bssid[WIFI_BSSID_ADDR_LEN];
-        int level = 0;
-        if (wifi_get_scan_result_bssid(results, i, bssid) != WIFI_SUCCESS) continue;
-        if (wifi_get_scan_result_ssid(results, i, ssid) == WIFI_SUCCESS
-            && QString::fromUtf8(ssid).endsWith("_nomap")) continue;
+    for (int i = 0; i < seen.size() && aps.size() < kMaxAccessPoints; ++i) {
+        const quint64 b = seen.at(i).bssid;
         QVariantMap ap;
         ap["macAddress"] = QString().sprintf("%02x:%02x:%02x:%02x:%02x:%02x",
-                                             bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5]);
-        if (wifi_get_scan_result_signal_level(results, i, &level) == WIFI_SUCCESS)
-            ap["signalStrength"] = level;
+                                             uint(b >> 40) & 0xff, uint(b >> 32) & 0xff, uint(b >> 24) & 0xff,
+                                             uint(b >> 16) & 0xff, uint(b >> 8) & 0xff, uint(b) & 0xff);
+        ap["signalStrength"] = seen.at(i).rssi;
         aps << ap;
     }
-    wifi_free_scan_results(results);
     return aps;
 }
 
@@ -94,12 +82,11 @@ NetworkLocator::NetworkLocator(QObject *parent) :
 #else
     m_nam = new QNetworkAccessManager(this);
 #endif
-    const QString keyFiles[2] = { QString("/accounts/1000/shared/misc/berrymaps_apikey.txt"),
-                                  QDir::homePath() + "/berrymaps_apikey.txt" };
-    for (int i = 0; i < 2 && m_apiKey.isEmpty(); ++i) {
-        QFile f(keyFiles[i]);
-        if (f.open(QIODevice::ReadOnly)) m_apiKey = QString::fromUtf8(f.readAll()).trimmed();
-    }
+    // Qt 4.8's QElapsedTimer has no constructor: until invalidated it holds
+    // garbage, and isValid()/elapsed() made locate() skip every attempt.
+    m_sinceRequest.invalidate();
+    m_sinceLocal.invalidate();
+    m_sinceLearn.invalidate();
 }
 
 bool NetworkLocator::allow()
@@ -113,13 +100,36 @@ bool NetworkLocator::allow()
     return true;
 }
 
+void NetworkLocator::learn(double lat, double lon, double accuracy, double speed)
+{
+    if (accuracy <= 0 || accuracy > kLearnAccuracy || speed > kLearnMaxSpeed) return;
+    if (m_sinceLearn.isValid() && m_sinceLearn.elapsed() < kLearnGapMs) return;
+    m_sinceLearn.start();
+    QList<WifiObservation> seen = WifiCache::scan();
+    if (!seen.isEmpty()) m_cache.learn(seen, lat, lon, accuracy);
+}
+
 bool NetworkLocator::locate()
 {
-    if (m_apiKey.isEmpty() || m_reply) return false;
+    // Offline first: access points this phone has already seen with the GPS on.
+    if (!m_sinceLocal.isValid() || m_sinceLocal.elapsed() >= kLocalGapMs) {
+        m_sinceLocal.start();
+        QList<WifiObservation> seen = WifiCache::scan();
+        double lat, lon, acc;
+        int used = 0;
+        if (m_cache.estimate(seen, &lat, &lon, &acc, &used)) {
+            bbportLog(QString("[net] posizione da Wi-Fi memorizzate: %1 reti note su %2, precisione %3 m")
+                          .arg(used).arg(seen.size()).arg(acc, 0, 'f', 0));
+            emit located(lat, lon, acc);
+            return true;
+        }
+    }
+
+    if (m_reply) return false;
     if (m_sinceRequest.isValid() && m_sinceRequest.elapsed() < kMinGapMs) return false;
     m_sinceRequest.start();   // the gap counts attempts too: callers retry from a timer
 
-    QVariantList aps = wifiAccessPoints();
+    QVariantList aps = wifiAccessPoints(WifiCache::scan());
     QVariantList towers = cellTowers();
     if (aps.isEmpty() && towers.isEmpty()) {
         bbportLog("[net] posizione da rete: nessuna rete Wi-Fi o cella leggibile");
@@ -130,18 +140,20 @@ bool NetworkLocator::locate()
         return false;
     }
 
-    QVariantMap body;
-    body["considerIp"] = false;
+    QVariantMap body, fallbacks;
+    fallbacks["ipf"] = false;    // no IP guess
+    fallbacks["lacf"] = true;    // cell area when the cell itself is unknown
+    body["fallbacks"] = fallbacks;
     if (!aps.isEmpty()) body["wifiAccessPoints"] = aps;
     if (!towers.isEmpty()) body["cellTowers"] = towers;
     QByteArray json;
     bb::data::JsonDataAccess jda;
     jda.saveToBuffer(body, &json);
 
-    QUrl url("https://www.googleapis.com/geolocation/v1/geolocate");
-    url.addQueryItem("key", m_apiKey);   // the TLS log strips queries
-    QNetworkRequest req(url);
+    QNetworkRequest req(QUrl("https://api.beacondb.net/v1/geolocate"));
     req.setRawHeader("Content-Type", "application/json");
+    // beaconDB asks every client to identify itself.
+    req.setRawHeader("User-Agent", "BerryMaps/0.1 (BlackBerry 10)");
     m_reply = m_nam->post(req, json);
     connect(m_reply, SIGNAL(finished()), this, SLOT(onReply()));
     bbportLog(QString("[net] posizione da rete: %1 reti Wi-Fi, %2 celle").arg(aps.size()).arg(towers.size()));
@@ -164,11 +176,14 @@ void NetworkLocator::onReply()
     double lon = loc.value("lng").toDouble(&lonOk);
     double acc = res.value("accuracy").toDouble();
     if (status != 200 || !latOk || !lonOk) {
-        // 404 = Google knows none of these networks.
+        // 404 = beaconDB knows none of these networks, nor the cell's area.
         bbportLog(QString("[net] posizione da rete non riuscita (HTTP %1)").arg(status));
         emit failed(status == 404 ? QString("reti sconosciute") : QString("HTTP %1").arg(status));
         return;
     }
-    bbportLog(QString("[net] posizione da rete: precisione %1 m").arg(acc, 0, 'f', 0));
+    // "fallback" is set when the answer comes from the cell area, not the networks.
+    QString fallback = res.value("fallback").toString();
+    bbportLog(QString("[net] posizione da rete: precisione %1 m%2").arg(acc, 0, 'f', 0)
+                  .arg(fallback.isEmpty() ? QString() : QString(" (ripiego: %1)").arg(fallback)));
     emit located(lat, lon, acc);
 }

@@ -6,27 +6,36 @@
 #include <QElapsedTimer>
 #include <QPointer>
 
+#include "wificache.hpp"
+
 class QNetworkAccessManager;
 class QNetworkReply;
 
-// Approximate position from the visible Wi-Fi networks and the serving cell,
-// via the Google Geolocation API (PROGETTO.md §6.3). BB10's own network
-// positioning is dead and the Q10 modem's GPS needs minutes for a cold fix, so
-// this gives the dot a starting place in a second or two; the GPS replaces it
-// as soon as it has a fix (LocationService).
+// Approximate position from the visible Wi-Fi networks and the serving cell
+// (PROGETTO.md §6.3), without Google. BB10's own network positioning is dead
+// and the Q10 modem's GPS needs minutes for a cold fix, so this gives the dot a
+// starting place in a second or two; the GPS replaces it as soon as it has a
+// fix (LocationService).
 //
-// Wi-Fi access points named *_nomap are left out (the owner's opt-out).
-// considerIp is off: an IP-based guess is often in another city.
+// The local WifiCache answers first, offline, wherever this phone has been
+// with the GPS on. Elsewhere it asks beaconDB: a community, opt-in database
+// with an MLS/Ichnaea-compatible API and no key. Its Wi-Fi coverage is still
+// sparse; it falls back to the cell (from the final Mozilla Location Service
+// dump). The IP fallback is off: an IP-based guess is often in another city.
 class NetworkLocator : public QObject
 {
     Q_OBJECT
 public:
     explicit NetworkLocator(QObject *parent = 0);
 
-    // Sends one request unless one is in flight, the last attempt was under
+    // Tries the local Wi-Fi cache (at most every 10 s, answers at once), then
+    // beaconDB: one request unless one is in flight, the last attempt was under
     // 5 minutes ago, no network is visible or today's cap is used up.
-    // Returns whether a request was sent.
+    // Returns whether a position was given or a request sent.
     bool locate();
+    // A GPS fix: if good and slow enough, teach the local cache the visible
+    // access points (at most every 10 s).
+    void learn(double lat, double lon, double accuracy, double speed);
 
 signals:
     void located(double lat, double lon, double accuracy);
@@ -40,8 +49,10 @@ private:
 
     QNetworkAccessManager *m_nam;
     QPointer<QNetworkReply> m_reply;
-    QString m_apiKey;
     QElapsedTimer m_sinceRequest;
+    QElapsedTimer m_sinceLocal;
+    QElapsedTimer m_sinceLearn;
+    WifiCache m_cache;
 };
 
 #endif /* NETWORKLOCATOR_HPP_ */
