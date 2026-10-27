@@ -848,6 +848,41 @@ void MapController::setNavigating(bool on)
     emit locationStateChanged();
 }
 
+void MapController::fitRoute(float bottomPx)
+{
+    if (m_route.size() < 2 || m_flinging || m_pinching) return;
+    double minLon = m_route.at(0).x(), maxLon = minLon, minLat = m_route.at(0).y(), maxLat = minLat;
+    for (int i = 1; i < m_route.size(); ++i) {
+        const double lon = m_route.at(i).x(), lat = m_route.at(i).y();   // qreal is float on ARM
+        minLon = qMin(minLon, lon);
+        maxLon = qMax(maxLon, lon);
+        minLat = qMin(minLat, lat);
+        maxLat = qMax(maxLat, lat);
+    }
+    // Free area: the map above the panel, less a margin on every side.
+    const double margin = 40;
+    const double freeW = m_vw - 2 * margin;
+    const double freeH = qMax(100.0, m_vh - bottomPx - 2 * margin);
+    int z = qMin(17, geo::kMaxZoom);   // street level at most, even for a short route
+    for (; z > geo::kMinZoom; --z) {
+        double w = geo::lonToX(maxLon, z) - geo::lonToX(minLon, z);
+        double h = geo::latToY(minLat, z) - geo::latToY(maxLat, z);
+        if (w <= freeW && h <= freeH) break;
+    }
+    setFollowing(false);
+    if (z != m_z) {
+        const double factor = qPow(2.0, z - m_z);
+        m_z = z;
+        retireForZoom(factor);
+        emit zoomChanged();
+    }
+    // Route centre in the middle of the free area: the view centre sits lower.
+    m_cx = (geo::lonToX(minLon, z) + geo::lonToX(maxLon, z)) / 2;
+    m_cy = (geo::latToY(maxLat, z) + geo::latToY(minLat, z)) / 2 + bottomPx / 2;
+    relayout();
+    m_settleTimer.start();
+}
+
 void MapController::setRoute(const QVector<QPointF> &lonLat, const QVector<QColor> &colors,
                              const QVector<bool> &walk)
 {

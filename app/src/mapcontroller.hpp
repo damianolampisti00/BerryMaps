@@ -73,6 +73,8 @@ public:
     // Search results / long press (Fase 3).
     Q_INVOKABLE void showPin(double lat, double lon, bool center);
     Q_INVOKABLE void clearPin();
+    // Zoom and centre so the whole route fits above a panel bottomPx tall.
+    Q_INVOKABLE void fitRoute(float bottomPx);
     Q_INVOKABLE QVariantMap centerLatLon() const;
     Q_INVOKABLE QVariantMap screenToLatLon(float x, float y) const;
     // Metres from the current GPS position, -1 without a fix.

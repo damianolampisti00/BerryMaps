@@ -34,11 +34,16 @@ Page {
     property string originName: "La mia posizione"
     property real originLat: 0
     property real originLon: 0
+    // Choosing the start: "Qui" (back to the GPS) only makes sense with a fix.
+    property bool originHereOk: true
+    // Route panel shrunk to one line, to see the route on the map.
+    property bool routeCollapsed: false
     // Space taken by the floating action bar at the bottom.
     property real chromeHeight: actionBarVisibility == ChromeVisibility.Overlay ? ui.du(14) : 0
 
     function openOriginSearch() {
         page.searchTarget = "origin";
+        page.originHereOk = map.hasFix();
         page.openSearch();
     }
 
@@ -97,9 +102,18 @@ Page {
     }
 
     function planRoute(mode) {
+        modeControl.selectedIndex = mode == "WALK" ? 1 : (mode == "BICYCLE" ? 2 : (mode == "TRANSIT" ? 3 : 0));
+        if (page.originIsMe && !map.hasFix()) {
+            // No GPS (indoors, or planning a trip): ask where to start from;
+            // choosing it plans the route (places.placeResolved).
+            if (!map.locating) map.locateMe();
+            toast.body = "Nessuna posizione GPS: scegli da dove partire.";
+            toast.show();
+            page.openOriginSearch();
+            return;
+        }
         var o = page.originPoint();
         if (!o) return;
-        modeControl.selectedIndex = mode == "WALK" ? 1 : (mode == "BICYCLE" ? 2 : (mode == "TRANSIT" ? 3 : 0));
         routing.plan(o.lat, o.lon, page.placeLat, page.placeLon, mode);
     }
 
@@ -120,7 +134,14 @@ Page {
         routing.setTime(kinds[timeKind.selectedIndex], timePicker.value);
     }
 
+    // Frame the whole route above the route panel (not while guiding).
+    function fitRoute() {
+        if (!routing.hasRoute || nav.active) return;
+        map.fitRoute(routeBoxLayout.layoutFrame.height + page.chromeHeight);
+    }
+
     function closeRoute() {
+        page.routeCollapsed = false;
         routing.clear();
         page.originIsMe = true;
         page.originName = "La mia posizione";
@@ -233,6 +254,7 @@ Page {
             toast.show();
         });
         // Guidance: no action bar (glanceable screen, no complex input).
+        routing.routeChanged.connect(page.fitRoute);
         nav.activeChanged.connect(function () {
             page.actionBarVisibility = nav.active ? ChromeVisibility.Hidden : ChromeVisibility.Overlay;
             // Active Frame: next manoeuvre while guiding, the normal snapshot otherwise.
@@ -454,6 +476,13 @@ Page {
                         preferredWidth: ui.du(22)
                         onClicked: page.planRoute("DRIVE")
                     }
+                    // Trip planning: pick the start first, GPS or not.
+                    Button {
+                        text: "Partenza\u2026"
+                        enabled: !routing.busy
+                        preferredWidth: ui.du(22)
+                        onClicked: page.openOriginSearch()
+                    }
                 }
             }
         }
@@ -471,49 +500,16 @@ Page {
                 rightPadding: ui.du(1.5)
                 topPadding: ui.du(1)
                 bottomPadding: ui.du(1.5)
-                SegmentedControl {
-                    id: modeControl
-                    Option { text: "Auto"; value: "DRIVE" }
-                    Option { text: "A piedi"; value: "WALK" }
-                    Option { text: "Bici"; value: "BICYCLE" }
-                    Option { text: "Mezzi"; value: "TRANSIT" }
-                    onSelectedIndexChanged: {
-                        if (!routing.hasRoute || routing.mode == selectedValue) return;
-                        var o = page.originPoint();
-                        if (o) routing.changeMode(o.lat, o.lon, selectedValue);
+                attachedObjects: [
+                    // The map frames the route in the space above this panel.
+                    LayoutUpdateHandler {
+                        id: routeBoxLayout
+                        onLayoutFrameChanged: page.fitRoute()
                     }
-                }
-                // Start: GPS position, a searched place, or a long-pressed point.
-                Button {
-                    horizontalAlignment: HorizontalAlignment.Fill
-                    text: "Da: " + page.originName
-                    onClicked: page.openOriginSearch()
-                }
-                // Public transport: leave now, leave at..., arrive by...
+                ]
+                // Collapsed: summary only, the route stays visible on the map.
                 Container {
-                    visible: modeControl.selectedValue == "TRANSIT"
-                    SegmentedControl {
-                        id: timeKind
-                        Option { text: "Adesso"; value: "now" }
-                        Option { text: "Partenza"; value: "depart" }
-                        Option { text: "Arrivo"; value: "arrive" }
-                        onSelectedIndexChanged: page.applyTime()
-                    }
-                    DateTimePicker {
-                        id: timePicker
-                        visible: timeKind.selectedIndex > 0
-                        mode: DateTimePickerMode.DateTime
-                        title: timeKind.selectedIndex == 2 ? "Arrivo entro" : "Partenza alle"
-                        value: new Date()
-                        onValueChanged: if (timeKind.selectedIndex > 0) page.applyTime()
-                    }
-                }
-                Label {
-                    text: "A: " + page.placeName
-                    textStyle.base: SystemDefaults.TextStyles.BodyText
-                    textStyle.color: Color.create("#bdc1c6")
-                }
-                Container {
+                    visible: page.routeCollapsed
                     layout: StackLayout { orientation: LayoutOrientation.LeftToRight }
                     Label {
                         text: routing.busy ? "Calcolo il percorso\u2026" : routing.summary
@@ -522,34 +518,106 @@ Page {
                         textStyle.base: SystemDefaults.TextStyles.TitleText
                         textStyle.color: Color.White
                     }
-                    ActivityIndicator {
-                        running: routing.busy
-                        visible: routing.busy
-                        preferredWidth: ui.du(5)
-                        preferredHeight: ui.du(5)
-                        verticalAlignment: VerticalAlignment.Center
-                    }
-                }
-                Container {
-                    layout: StackLayout { orientation: LayoutOrientation.LeftToRight }
-                    topPadding: ui.du(1)
                     Button {
-                        text: "Avvia"
-                        appearance: ControlAppearance.Primary
-                        enabled: routing.hasRoute && !routing.busy
-                        layoutProperties: StackLayoutProperties { spaceQuota: 2 }
-                        onClicked: nav.start()
-                    }
-                    Button {
-                        text: "Passi"
-                        enabled: routing.hasRoute
-                        layoutProperties: StackLayoutProperties { spaceQuota: 1 }
-                        onClicked: stepsSheet.open()
+                        text: "\u25b4"
+                        preferredWidth: ui.du(11)
+                        onClicked: page.routeCollapsed = false
                     }
                     Button {
                         text: "\u2715"
                         preferredWidth: ui.du(11)
                         onClicked: page.closeRoute()
+                    }
+                }
+                Container {
+                    visible: !page.routeCollapsed
+                    SegmentedControl {
+                        id: modeControl
+                        Option { text: "Auto"; value: "DRIVE" }
+                        Option { text: "A piedi"; value: "WALK" }
+                        Option { text: "Bici"; value: "BICYCLE" }
+                        Option { text: "Mezzi"; value: "TRANSIT" }
+                        onSelectedIndexChanged: {
+                            if (!routing.hasRoute || routing.mode == selectedValue) return;
+                            var o = page.originPoint();
+                            if (o) routing.changeMode(o.lat, o.lon, selectedValue);
+                        }
+                    }
+                    // Start: GPS position, a searched place, or a long-pressed point.
+                    Button {
+                        horizontalAlignment: HorizontalAlignment.Fill
+                        text: "Da: " + page.originName
+                        onClicked: page.openOriginSearch()
+                    }
+                    // Public transport: leave now, leave at..., arrive by...
+                    Container {
+                        visible: modeControl.selectedValue == "TRANSIT"
+                        SegmentedControl {
+                            id: timeKind
+                            Option { text: "Adesso"; value: "now" }
+                            Option { text: "Partenza"; value: "depart" }
+                            Option { text: "Arrivo"; value: "arrive" }
+                            onSelectedIndexChanged: page.applyTime()
+                        }
+                        DateTimePicker {
+                            id: timePicker
+                            visible: timeKind.selectedIndex > 0
+                            mode: DateTimePickerMode.DateTime
+                            title: timeKind.selectedIndex == 2 ? "Arrivo entro" : "Partenza alle"
+                            value: new Date()
+                            onValueChanged: if (timeKind.selectedIndex > 0) page.applyTime()
+                        }
+                    }
+                    Label {
+                        text: "A: " + page.placeName
+                        textStyle.base: SystemDefaults.TextStyles.BodyText
+                        textStyle.color: Color.create("#bdc1c6")
+                    }
+                    Container {
+                        layout: StackLayout { orientation: LayoutOrientation.LeftToRight }
+                        Label {
+                            text: routing.busy ? "Calcolo il percorso\u2026" : routing.summary
+                            layoutProperties: StackLayoutProperties { spaceQuota: 1 }
+                            verticalAlignment: VerticalAlignment.Center
+                            textStyle.base: SystemDefaults.TextStyles.TitleText
+                            textStyle.color: Color.White
+                        }
+                        ActivityIndicator {
+                            running: routing.busy
+                            visible: routing.busy
+                            preferredWidth: ui.du(5)
+                            preferredHeight: ui.du(5)
+                            verticalAlignment: VerticalAlignment.Center
+                        }
+                    }
+                    Container {
+                        layout: StackLayout { orientation: LayoutOrientation.LeftToRight }
+                        topPadding: ui.du(1)
+                        Button {
+                            text: "Avvia"
+                            appearance: ControlAppearance.Primary
+                            // Guidance follows the GPS: only from "La mia posizione".
+                            enabled: routing.hasRoute && !routing.busy && page.originIsMe
+                            layoutProperties: StackLayoutProperties { spaceQuota: 2 }
+                            onClicked: nav.start()
+                        }
+                        Button {
+                            text: "Passi"
+                            enabled: routing.hasRoute
+                            layoutProperties: StackLayoutProperties { spaceQuota: 1 }
+                            onClicked: stepsSheet.open()
+                        }
+                        // Shrink to one line to see the route on the map.
+                        Button {
+                            text: "\u25be"
+                            preferredWidth: ui.du(11)
+                            onClicked: page.routeCollapsed = true
+                        }
+                        Button {
+                            text: "\u2715"
+                            preferredWidth: ui.du(11)
+                            onClicked: page.closeRoute()
+                        }
                     }
                 }
             }
@@ -717,15 +785,16 @@ Page {
                     verticalAlignment: VerticalAlignment.Center
                 }
                 Button {
-                    text: page.searchTarget == "origin" ? "Qui" : "Annulla"
+                    text: page.searchTarget == "origin" && page.originHereOk ? "Qui" : "Annulla"
                     preferredWidth: ui.du(18)
                     verticalAlignment: VerticalAlignment.Center
                     // Choosing the start: "Qui" = back to the GPS position.
                     onClicked: {
-                        if (page.searchTarget == "origin") {
+                        if (page.searchTarget == "origin" && page.originHereOk) {
                             page.searchTarget = "place";
                             page.useMyPosition();
                         } else {
+                            page.searchTarget = "place";
                             page.closeSearch();
                         }
                     }
