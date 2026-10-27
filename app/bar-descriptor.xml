@@ -61,6 +61,8 @@
     <permission system="true">run_native</permission>
     <permission>access_internet</permission>
     <permission>access_location_services</permission>
+    <!-- Wi-Fi scan results for the network position (NetworkLocator) -->
+    <permission>access_wifi_public</permission>
     <!-- navigation keeps guiding with the app minimized -->
     <permission>run_when_backgrounded</permission>
     <!-- berrymaps.log copy and the API key file live in shared/misc -->

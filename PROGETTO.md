@@ -300,6 +300,17 @@ Nei casi A e B:
 - **Da verificare sul telefono** (Fase 0): se il motore Qualcomm accetta l'URL e quanto scende il TTFF.
   Misura: tempo al primo fix con `reset=cold` + autonomo vs `gps_ms_based` + supl.google.com.
 - Privacy: la richiesta SUPL rivela a Google la cella attuale (accettabile, è lo stesso di Android).
+- **Verifica sul Q10 (27 ottobre 2026)**, SUPL resta scartato:
+  - `supl.google.com:7275` accetta il TLS 1.0 del modem; la catena finisce in GlobalSign Root CA, che va
+    aggiunta in `/var/location/supl` (il modem ha 10 posti per i certificati).
+  - Lo SLP URL è per richiesta, e il location manager, quando unisce le richieste, copia anche gli
+    `slpUrl` vuoti: una seconda richiesta autonoma (per esempio `QGeoSatelliteInfoSource`) cancella il
+    server. Per questo il test SUPL sul Q5 non poteva funzionare.
+  - Anche con richiesta unica, `lcs_mode=supl` e `isGPSStandalone = 0`, `qct_rrm` avvia comunque la
+    sessione in standalone.
+  - **Ora sbagliata nel motore GPS**: `qct_rrm` salva l'orario di ogni fix del modem come "ora XTRA" e lo
+    reinietta (`injectUTCtime: Xtra time=… deverror = -619315200s`, cioè -1024 settimane). È il rollover della
+    settimana GPS nel firmware del modem: probabile causa dei fix a freddo lenti, non correggibile dall'app.
 
 ### 6.3 Posizione rapida al chiuso (fallback rete)
 - Le posizioni Wi-Fi/cella di BB10 si appoggiavano a database BlackBerry: probabilmente **non funzionano più**
@@ -309,6 +320,9 @@ Nei casi A e B:
   20–2000 m in ~1 s. Usata solo all'avvio se non c'è un fix GPS recente, e al massimo ogni 5 minuti.
 - Requisito: la scansione Wi-Fi potrebbe richiedere permessi aggiuntivi o non funzionare con Wi-Fi spento
   (da verificare).
+- **Implementato** in `NetworkLocator` (0.1.0.30, permesso `access_wifi_public`): sul Q10, al chiuso,
+  7 reti Wi-Fi + 1 cella → **precisione 19 m in 0,6 s**. Pallino sempre grigio (mai "affidabile"); il primo
+  fix GPS lo sostituisce, e si torna alla rete dopo 60 s senza GPS (una richiesta ogni 5 minuti al massimo).
 
 ### 6.4 Profili di posizione (il cuore del risparmio energetico)
 | Stato | Sorgente | Periodo | Flag | Note |

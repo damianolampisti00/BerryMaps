@@ -1,4 +1,5 @@
 #include "locationservice.hpp"
+#include "networklocator.hpp"
 #include "bbportlog.hpp"
 
 #include <QtCore/qmath.h>
@@ -9,6 +10,7 @@ namespace {
 const int kFastIntervalMs = 1000;
 const int kSlowIntervalMs = 5000;
 const int kStaleMs = 15000;            // no fix for this long -> grey dot (unless stationary)
+const int kNetworkFallbackMs = 60000;  // no GPS fix for this long -> ask the network
 const double kMaxReliableAccuracy = 50; // metres
 const double kMovingSpeed = 2.0;       // m/s: above this the GPS course is the heading
 const double kMinField = 20e-6, kMaxField = 70e-6;  // tesla; Earth's field in Italy ~46 uT
@@ -17,14 +19,16 @@ const int kWarnStationary = 0x10002;   // bb::location::PositionErrorCode::WarnS
 } // namespace
 
 LocationService::LocationService(QObject *parent) :
-    QObject(parent), m_src(0), m_compass(0), m_magnet(0),
+    QObject(parent), m_src(0), m_compass(0), m_magnet(0), m_net(new NetworkLocator(this)),
     m_wanted(false), m_foreground(true), m_fast(false), m_running(false),
-    m_hasFix(false), m_stationary(false), m_fixThisRun(false),
+    m_hasFix(false), m_stationary(false), m_fixThisRun(false), m_fromNetwork(false),
     m_lat(0), m_lon(0), m_accuracy(-1), m_speed(0),
     m_headingValid(false), m_heading(0), m_gpsHeading(false)
 {
     m_tick.setInterval(300);   // compass refresh + staleness check
     connect(&m_tick, SIGNAL(timeout()), this, SLOT(onTick()));
+    connect(m_net, SIGNAL(located(double, double, double)),
+            this, SLOT(onNetworkLocated(double, double, double)));
 }
 
 LocationService::~LocationService()
@@ -44,9 +48,15 @@ void LocationService::setFast(bool fast)
 
 bool LocationService::reliable() const
 {
-    if (!m_hasFix) return false;
+    if (!m_hasFix || m_fromNetwork) return false;
     if (m_accuracy < 0 || m_accuracy > kMaxReliableAccuracy) return false;
     return m_stationary || m_sinceFix.elapsed() <= kStaleMs;
+}
+
+bool LocationService::gpsFresh() const
+{
+    if (!m_hasFix || m_fromNetwork) return false;
+    return m_stationary || m_sinceFix.elapsed() <= kNetworkFallbackMs;
 }
 
 void LocationService::setStatus(const QString &s)
@@ -104,6 +114,8 @@ void LocationService::start()
     m_tick.start();
     if (!m_hasFix) setStatus(QString::fromUtf8("Ricerca segnale GPS…"));
     bbportLog(QString("[gps] avviato (%1 ms)").arg(m_fast ? kFastIntervalMs : kSlowIntervalMs));
+    // A cold GPS fix takes minutes on the Q10: show a network position meanwhile.
+    if (!gpsFresh()) m_net->locate();
 }
 
 void LocationService::stop()
@@ -128,6 +140,7 @@ void LocationService::onPosition(const QGeoPositionInfo &info)
     if (!info.coordinate().isValid()) return;
     bool first = !m_hasFix;
     m_hasFix = true;
+    m_fromNetwork = false;
     m_stationary = false;
     m_sinceFix.start();
     m_lat = info.coordinate().latitude();
@@ -196,13 +209,32 @@ void LocationService::updateCompassHeading()
 
 void LocationService::onTick()
 {
+    // Rate-limited inside: retries every 5 minutes while the GPS has nothing.
+    if (!gpsFresh()) m_net->locate();
     if (!m_hasFix) return;
     double before = m_heading;
     bool beforeValid = m_headingValid;
     bool beforeReliable = reliable();
     updateCompassHeading();
-    if (!m_stationary && m_sinceFix.elapsed() > kStaleMs)
+    if (!m_fromNetwork && !m_stationary && m_sinceFix.elapsed() > kStaleMs)
         setStatus("Posizione non aggiornata: segnale GPS perso");
     if (m_headingValid != beforeValid || qAbs(m_heading - before) > 2.0 || reliable() != beforeReliable)
         emit updated();
+}
+
+void LocationService::onNetworkLocated(double lat, double lon, double accuracy)
+{
+    // A GPS fix that arrived while the request was in flight wins.
+    if (!m_running || gpsFresh()) return;
+    m_hasFix = true;
+    m_fromNetwork = true;
+    m_stationary = false;
+    m_lat = lat;
+    m_lon = lon;
+    m_accuracy = accuracy;
+    m_speed = 0;
+    m_gpsHeading = false;
+    updateCompassHeading();
+    setStatus(QString::fromUtf8("Posizione approssimativa (±%1 m), ricerca GPS…").arg(qRound(accuracy)));
+    emit updated();
 }

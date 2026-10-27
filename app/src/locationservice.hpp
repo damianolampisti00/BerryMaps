@@ -10,6 +10,8 @@
 #include <QtSensors/QCompass>
 #include <QtSensors/QMagnetometer>
 
+class NetworkLocator;
+
 // Unqualified names in signal/slot signatures: Qt 4 matches SIGNAL()/SLOT()
 // strings textually and the Mobility headers declare them unqualified.
 QTMS_USE_NAMESPACE
@@ -21,6 +23,10 @@ QTM_USE_NAMESPACE
 // network positioning is dead, so this always asks for provider=gnss,
 // fixType=gps_autonomous (assistance comes from XTRA). The BB10 source's own
 // stationary detection pauses updates while the phone is still.
+//
+// Until the GPS has a fix, and again after a minute without one, the dot comes
+// from NetworkLocator (Google Geolocation, Wi-Fi + cell): approximate, so never
+// "reliable". Any GPS fix replaces it.
 //
 // Runs only while wanted AND the app is in the foreground with the screen on.
 // Heading: GPS course when moving (> 2 m/s), compass when still - and only if
@@ -56,8 +62,10 @@ private slots:
     void onPosition(const QGeoPositionInfo &info);
     void onTimeout();
     void onTick();
+    void onNetworkLocated(double lat, double lon, double accuracy);
 
 private:
+    bool gpsFresh() const;
     void apply();
     void start();
     void stop();
@@ -67,12 +75,14 @@ private:
     QGeoPositionInfoSource *m_src;
     QCompass *m_compass;
     QMagnetometer *m_magnet;
+    NetworkLocator *m_net;
     QTimer m_tick;
     QElapsedTimer m_sinceFix;
     QElapsedTimer m_sinceStart;
     bool m_wanted, m_foreground, m_fast, m_running;
     bool m_hasFix, m_stationary;
     bool m_fixThisRun;          // stationary detection is armed only after it
+    bool m_fromNetwork;         // the current position is NetworkLocator's
     double m_lat, m_lon, m_accuracy, m_speed;
     bool m_headingValid;
     double m_heading;
