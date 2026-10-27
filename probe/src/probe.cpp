@@ -528,14 +528,14 @@ void Probe::startGps(const QString &mode)
         m_pos->setPreferredPositioningMethods(QGeoPositionInfoSource::SatellitePositioningMethods);
         setGpsProperty("provider", "gnss");
         setGpsProperty("fixType", mode == "supl" ? "gps_ms_based" : "gps_autonomous");
-        // SUPL also starts from a cold reset, so its time-to-first-fix is directly
-        // comparable with the plain "cold" run (which got no fix in 180 s).
-        if (mode == "cold" || mode == "supl") setGpsProperty("reset", "cold");
-        // Google's public SUPL server; 7276 is the plain-text port (the phone's
-        // SUPL client is configured for TLS 1.0, which 7275 likely refuses).
+        // No cold reset for SUPL: it would also wipe the XTRA data in the engine.
+        if (mode == "cold") setGpsProperty("reset", "cold");
+        // Google's public SUPL server over TLS: 7275 accepts the modem's TLS 1.0
+        // and its chain ends at GlobalSign Root CA, loaded among the modem's SUPL
+        // certs. Also needs the modem's MO method set to SUPL (gnss-override).
         // The property is declared as "slpUrl" on GeoPositionInfoSourceBb (seen
         // in the property dump): "slpURL" only created an ignored dynamic one.
-        if (mode == "supl") setGpsProperty("slpUrl", "supl.google.com:7276");
+        if (mode == "supl") setGpsProperty("slpUrl", "supl.google.com:7275");
     } else if (mode == "cellsite" || mode == "wifi") {
         m_pos->setPreferredPositioningMethods(QGeoPositionInfoSource::NonSatellitePositioningMethods);
         setGpsProperty("provider", "network");
@@ -549,7 +549,12 @@ void Probe::startGps(const QString &mode)
     connect(m_pos, SIGNAL(updateTimeout()), this, SLOT(onPositionTimeout()));
     m_pos->setUpdateInterval(1000);
 
-    m_sat = QGeoSatelliteInfoSource::createDefaultSource(this);
+    // The satellite source is a second, autonomous location request with no
+    // slpUrl (it has no fixType/slpUrl properties). Merged with the SUPL request
+    // it left qct_rrm with an empty SLP URL and standalone mode only, so the
+    // SUPL test runs without it (no satellite counts in this mode).
+    m_sat = mode == "supl" ? 0 : QGeoSatelliteInfoSource::createDefaultSource(this);
+    if (mode == "supl") log("[gps] SUPL: sorgente satelliti disattivata (richiesta autonoma separata)");
     if (m_sat) {
         connect(m_sat, SIGNAL(satellitesInViewUpdated(const QList<QGeoSatelliteInfo> &)),
                 this, SLOT(onSatellitesInView(const QList<QGeoSatelliteInfo> &)));
