@@ -12,3 +12,7 @@ stage/
 
 # Local install settings (phone IP, root key path)
 package.config.ps1
+
+# Momentics/qmake build output and the packager's asset index
+arm/
+.assets.index
